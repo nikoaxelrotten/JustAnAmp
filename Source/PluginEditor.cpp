@@ -1,0 +1,997 @@
+#include "PluginEditor.h"
+#include "BinaryData.h"
+#include <map>
+
+using namespace jahead;
+using APVTS = juce::AudioProcessorValueTreeState;
+
+static juce::Font fnt (float h, int style = juce::Font::plain)
+{
+    return juce::Font (juce::FontOptions (h, style));
+}
+
+//==============================================================================
+const Skin& jahead::skinFor (int head)
+{
+    static const Skin skins[4] =
+    {
+        // Pulga: frente amarillo, perillas negras con puntero blanco
+        { "Pulga",          juce::Colour (0xfff2c230), juce::Colour (0xfff2c43a), juce::Colour (0xffd9a41a),
+                            juce::Colour (0xff4d4a44), juce::Colour (0xff070707), juce::Colour (0xffffffff),
+                            juce::Colour (0xff201803), juce::Colour (0xff6e4300), true },
+        // NotFieldy: panel negro con neon verde y perillas facetadas
+        { "NotFieldy",      juce::Colour (0xff52ee3a), juce::Colour (0xff131513), juce::Colour (0xff070807),
+                            juce::Colour (0xffc4ffa4), juce::Colour (0xff1c8a14), juce::Colour (0xff06240a),
+                            juce::Colour (0xffb9f2b0), juce::Colour (0xff7dff62), false },
+        // RoAguMiSSTruVe: negro con perillas de tapa cromada
+        { "RoAguMiSSTruVe", juce::Colour (0xffa9bccd), juce::Colour (0xff2a2c30), juce::Colour (0xff131416),
+                            juce::Colour (0xfff4f6f8), juce::Colour (0xff737a83), juce::Colour (0xff101010),
+                            juce::Colour (0xffc9ced6), juce::Colour (0xffffffff), false },
+        // Ryandemar: panel plateado con perillas rojas facetadas
+        { "Ryandemar",      juce::Colour (0xffd1283c), juce::Colour (0xffdcdee2), juce::Colour (0xffb4b8be),
+                            juce::Colour (0xffe8586a), juce::Colour (0xff5c0914), juce::Colour (0xffffffff),
+                            juce::Colour (0xff1f2024), juce::Colour (0xffa01828), true }
+    };
+    return skins[juce::jlimit (0, 3, head)];
+}
+
+//==============================================================================
+struct KnobSlider : public juce::Slider
+{
+    bool ampStyle = false;
+    juce::Colour col { 0xffffffff };
+};
+
+JAHeadLookAndFeel::JAHeadLookAndFeel()
+{
+    setColour (juce::TextButton::textColourOffId, juce::Colour (0xffa7adb8));
+    setColour (juce::TextButton::textColourOnId, juce::Colour (0xff101114));
+    setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a626d));
+    setColour (juce::PopupMenu::backgroundColourId, juce::Colour (0xff15171c));
+    setColour (juce::PopupMenu::textColourId, juce::Colour (0xffd5d9df));
+    setColour (juce::PopupMenu::headerTextColourId, juce::Colour (0xff8a919c));
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, juce::Colour (0xff2c3038));
+    setColour (juce::PopupMenu::highlightedTextColourId, juce::Colours::white);
+}
+
+juce::Font JAHeadLookAndFeel::getTextButtonFont (juce::TextButton& b, int) { return fnt (b.getProperties().contains ("small") ? 11.0f : 12.0f, juce::Font::bold); }
+
+juce::Font JAHeadLookAndFeel::getPopupMenuFont() { return fnt (13.0f); }
+
+void JAHeadLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down)
+{
+    auto r = b.getLocalBounds().toFloat().reduced (0.5f);
+    const bool on = b.getToggleState();
+    g.setColour (on ? b.findColour (juce::TextButton::buttonOnColourId)
+                    : juce::Colour (0xff1d2026).brighter (down ? 0.45f : (over ? 0.12f : 0.0f)));
+    g.fillRoundedRectangle (r, 6.0f);
+    if (! on)
+    {
+        g.setColour (juce::Colour (0xff2e323a));
+        g.drawRoundedRectangle (r, 6.0f, 1.0f);
+        if (b.getProperties().contains ("hint"))
+        {
+            g.setColour (juce::Colour ((juce::uint32) (juce::int64) b.getProperties()["hint"]));
+            g.fillRoundedRectangle (r.getX() + 8.0f, r.getBottom() - 4.0f, r.getWidth() - 16.0f, 2.5f, 1.2f);
+        }
+    }
+}
+
+void JAHeadLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float, float,
+                                          juce::Slider::SliderStyle, juce::Slider&)
+{
+    const auto& sk = skinFor (skin);
+    const float cx = (float) x + (float) w * 0.5f;
+    g.setColour (juce::Colour (0xff050605));
+    g.fillRoundedRectangle (cx - 3.0f, (float) y, 6.0f, (float) h, 3.0f);
+    g.setColour (sk.accent.withAlpha (0.55f));
+    for (int i = 0; i <= 8; ++i)
+        g.drawHorizontalLine ((int) ((float) y + (float) h * (float) i / 8.0f), cx - 9.0f, cx - 5.0f);
+    g.setColour (sk.accent.withAlpha (0.20f));
+    g.fillRoundedRectangle (cx - 14.0f, pos - 8.0f, 28.0f, 16.0f, 4.0f);
+    g.setGradientFill (juce::ColourGradient (sk.knobHi, cx, pos - 6.0f, sk.accent.darker (0.5f), cx, pos + 6.0f, false));
+    g.fillRoundedRectangle (cx - 11.0f, pos - 6.0f, 22.0f, 12.0f, 3.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.drawLine (cx - 9.0f, pos, cx + 9.0f, pos, 1.4f);
+}
+
+void JAHeadLookAndFeel::drawCornerResizer (juce::Graphics& g, int w, int h, bool, bool)
+{
+    g.setColour (juce::Colour (0xff6a717a));
+    for (int i = 0; i < 3; ++i)
+    {
+        const float o = 5.0f + (float) i * 5.0f;
+        g.drawLine ((float) w - 3.0f, (float) h - o, (float) w - o, (float) h - 3.0f, 1.6f);
+    }
+}
+
+// Perillas inspiradas en las fotos de cada head
+static void drawAmpKnob (juce::Graphics& g, int skin, const Skin& sk, juce::Point<float> c, float d, float angle)
+{
+    const float R = d * 0.5f;
+    const float sx = std::sin (angle), sy = -std::cos (angle);
+    auto circle = [&] (float r) { return juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (c); };
+    auto lineAt = [&] (float r0, float r1, float th) { return juce::Line<float> (c.x + std::sin (th) * r0, c.y - std::cos (th) * r0, c.x + std::sin (th) * r1, c.y - std::cos (th) * r1); };
+    auto facet = [&] (float r, int n)
+    {
+        juce::Path p;
+        for (int i = 0; i < n; ++i)
+        {
+            const float th = (float) i * juce::MathConstants<float>::twoPi / (float) n;
+            const juce::Point<float> q (c.x + std::sin (th) * r, c.y - std::cos (th) * r);
+            if (i == 0) p.startNewSubPath (q); else p.lineTo (q);
+        }
+        p.closeSubPath();
+        return p;
+    };
+
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.fillEllipse (circle (R * 1.04f).translated (0.0f, 2.5f));
+
+    if (skin == 0)   // Pulga: negra con falda estriada y cuerpo brillante
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3a3a), c.x - R * 0.5f, c.y - R * 0.6f, juce::Colour (0xff050505), c.x + R * 0.6f, c.y + R * 0.7f, false));
+        g.fillEllipse (circle (R * 1.04f));
+        g.setColour (juce::Colours::white.withAlpha (0.2f));
+        for (int i = 0; i < 30; ++i)
+            g.drawLine (lineAt (R * 0.86f, R * 1.02f, (float) i * juce::MathConstants<float>::twoPi / 30.0f), 1.0f);
+        g.setGradientFill (juce::ColourGradient (sk.knobHi, c.x - R * 0.3f, c.y - R * 0.4f, sk.knobLo, c.x + R * 0.5f, c.y + R * 0.6f, true));
+        g.fillEllipse (circle (R * 0.66f));
+        g.setColour (juce::Colours::white.withAlpha (0.16f));
+        g.drawEllipse (circle (R * 0.62f), 1.0f);
+        g.setColour (sk.pointer);
+        g.drawLine (lineAt (R * 0.12f, R * 1.0f, angle), 3.4f);
+    }
+    else if (skin == 2)   // RoAguMiSSTruVe: base negra y tapa cromada
+    {
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2c2e), c.x - R * 0.5f, c.y - R * 0.6f, juce::Colour (0xff060606), c.x + R * 0.6f, c.y + R * 0.7f, false));
+        g.fillEllipse (circle (R * 1.04f));
+        g.setColour (juce::Colours::white.withAlpha (0.16f));
+        for (int i = 0; i < 40; ++i)
+            g.drawLine (lineAt (R * 0.9f, R * 1.03f, (float) i * juce::MathConstants<float>::twoPi / 40.0f), 1.0f);
+        g.setGradientFill (juce::ColourGradient (sk.knobHi, c.x - R * 0.4f, c.y - R * 0.5f, sk.knobLo, c.x + R * 0.6f, c.y + R * 0.7f, true));
+        g.fillEllipse (circle (R * 0.72f));
+        g.setColour (juce::Colours::black.withAlpha (0.3f));
+        g.drawEllipse (circle (R * 0.72f), 1.0f);
+        g.setColour (juce::Colour (0xffffffff));
+        g.drawLine (lineAt (R * 0.78f, R * 1.0f, angle), 3.0f);
+        g.setColour (sk.pointer);
+        g.drawLine (lineAt (R * 0.1f, R * 0.66f, angle), 2.4f);
+    }
+    else   // NotFieldy (verde) y Ryandemar (rojo): perilla facetada
+    {
+        if (skin == 1)
+        {
+            g.setColour (sk.accent.withAlpha (0.22f));
+            g.fillEllipse (circle (R * 1.16f));
+        }
+        const auto body = facet (R * 1.0f, 10);
+        g.setGradientFill (juce::ColourGradient (sk.knobHi, c.x - R * 0.5f, c.y - R * 0.6f, sk.knobLo, c.x + R * 0.7f, c.y + R * 0.8f, false));
+        g.fillPath (body);
+        g.setColour (juce::Colours::black.withAlpha (0.4f));
+        g.strokePath (body, juce::PathStrokeType (1.2f));
+        g.setColour (juce::Colours::white.withAlpha (0.22f));
+        g.strokePath (facet (R * 0.78f, 10), juce::PathStrokeType (1.0f));
+        g.setColour (sk.pointer);
+        g.drawLine (lineAt (R * 0.18f, R * 0.95f, angle), 3.6f);
+    }
+    juce::ignoreUnused (sx, sy);
+}
+
+void JAHeadLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
+                                          float a0, float a1, juce::Slider& s)
+{
+    auto* ks = dynamic_cast<KnobSlider*> (&s);
+    const bool amp = ks != nullptr && ks->ampStyle;
+    const auto& sk = skinFor (skin);
+    const juce::Colour ringCol = amp ? sk.accent : (ks != nullptr ? ks->col : juce::Colours::white);
+
+    auto b = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (1.0f);
+    const float D = juce::jmin (b.getWidth(), b.getHeight());
+    auto outer = juce::Rectangle<float> (D, D).withCentre (b.getCentre());
+    const auto c = outer.getCentre();
+    const float angle = a0 + pos * (a1 - a0);
+
+    // Anillo de valor
+    const float ringR = D * 0.5f - 2.5f;
+    juce::Path track, value;
+    track.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, a0, a1, true);
+    value.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, a0, angle, true);
+    g.setColour (amp && sk.light ? juce::Colour (0x38000000) : juce::Colour (0x20ffffff));
+    g.strokePath (track, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    if (amp)
+    {
+        g.setColour (ringCol.withAlpha (0.25f));
+        g.strokePath (value, juce::PathStrokeType (7.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    g.setColour (ringCol);
+    g.strokePath (value, juce::PathStrokeType (3.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    if (amp)
+    {
+        drawAmpKnob (g, skin, sk, c, D * 0.72f, angle);
+        return;
+    }
+
+    // Cuerpo
+    auto body = outer.reduced (D * 0.14f);
+    const float d = body.getWidth();
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    g.fillEllipse (body.translated (0.0f, 2.5f));
+    if (amp)
+        g.setGradientFill (juce::ColourGradient (sk.knobHi, body.getX() + d * 0.3f, body.getY() + d * 0.25f,
+                                                 sk.knobLo, body.getRight(), body.getBottom(), true));
+    else
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff484c54), body.getX() + d * 0.3f, body.getY() + d * 0.25f,
+                                                 juce::Colour (0xff121417), body.getRight(), body.getBottom(), true));
+    g.fillEllipse (body);
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.drawEllipse (body, 1.2f);
+    g.setColour (juce::Colours::white.withAlpha (0.14f));
+    g.drawEllipse (body.reduced (1.5f), 1.0f);
+
+    // Indicador
+    const float r0 = d * 0.18f, r1 = d * 0.46f;
+    const float sx = std::sin (angle), sy = -std::cos (angle);
+    g.setColour (amp ? sk.pointer : juce::Colours::white);
+    g.drawLine (c.x + sx * r0, c.y + sy * r0, c.x + sx * r1, c.y + sy * r1, amp ? 3.2f : 2.6f);
+}
+
+//==============================================================================
+// Una perilla con nombre y valor
+class KnobUnit : public juce::Component
+{
+public:
+    KnobUnit (APVTS& apvts, const juce::String& pid, const juce::String& nm, int size, bool amp,
+              juce::Colour modCol, std::function<juce::String (double)> f)
+        : name (nm), knobSize (size), fmt (std::move (f)), labelCol (0xff9aa0aa), valueCol (modCol)
+    {
+        slider.ampStyle = amp;
+        slider.col = modCol;
+        slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        slider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+        slider.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+        slider.setMouseDragSensitivity (190);
+        slider.setScrollWheelEnabled (true);
+        addAndMakeVisible (slider);
+        att = std::make_unique<APVTS::SliderAttachment> (apvts, pid, slider);
+        if (auto* prm = apvts.getParameter (pid))
+            slider.setDoubleClickReturnValue (true, prm->convertFrom0to1 (prm->getDefaultValue()));
+        slider.onValueChange = [this] { repaint(); };
+        setTitle (nm);
+    }
+
+    void setColours (juce::Colour label, juce::Colour value) { labelCol = label; valueCol = value; repaint(); }
+    void setActive (bool a) { slider.setEnabled (a); setAlpha (a ? 1.0f : 0.32f); }
+    void setName (const juce::String& n) { name = n; repaint(); }
+
+    void resized() override { slider.setBounds ((getWidth() - knobSize) / 2, 0, knobSize, knobSize); }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (labelCol);
+        g.setFont (fnt (11.5f, juce::Font::bold));
+        g.drawText (name, 0, knobSize + 2, getWidth(), 14, juce::Justification::centred);
+        g.setColour (valueCol);
+        g.setFont (fnt (11.5f));
+        g.drawText (fmt (slider.getValue()), 0, knobSize + 16, getWidth(), 14, juce::Justification::centred);
+    }
+
+    int totalHeight() const { return knobSize + 31; }
+
+private:
+    KnobSlider slider;
+    juce::String name;
+    int knobSize;
+    std::function<juce::String (double)> fmt;
+    juce::Colour labelCol, valueCol;
+    std::unique_ptr<APVTS::SliderAttachment> att;
+};
+
+static juce::String fmt1 (double v)  { return juce::String (v, 1); }
+static juce::String fmtDb (double v) { return juce::String (v, 1) + " dB"; }
+static juce::String fmtPct (double v){ return juce::String ((int) std::round (v)) + "%"; }
+static juce::String fmtGate (double v) { return v <= -79.5 ? juce::String ("OFF") : juce::String (v, 1) + " dB"; }
+static juce::String fmtRatio (double v) { return juce::String (v, 1) + ":1"; }
+static juce::String fmtMs1 (double v) { return v < 10.0 ? juce::String (v, 1) + " ms" : juce::String ((int) std::round (v)) + " ms"; }
+static juce::String fmtFreq (double v)
+{
+    static const char* f[5] = { "220 Hz", "450 Hz", "800 Hz", "1.6 kHz", "3 kHz" };
+    return f[juce::jlimit (0, 4, (int) std::round (v))];
+}
+static juce::String fmtMs (double v) { return juce::String ((int) std::round (v)) + " ms"; }
+
+//==============================================================================
+// Fila de botones ligada a un parámetro de tipo lista
+class ChoiceStrip : public juce::Component
+{
+public:
+    ChoiceStrip (APVTS& apvts, const juce::String& pid, const juce::StringArray& names,
+                 std::vector<juce::Colour> accents, int numCols, int rowHeight, int gapPx, int radioId, bool hint)
+        : cols (numCols), rowH (rowHeight), gap (gapPx)
+    {
+        auto* param = apvts.getParameter (pid);
+        for (int i = 0; i < names.size(); ++i)
+        {
+            auto b = std::make_unique<juce::TextButton> (names[i]);
+            b->setClickingTogglesState (true);
+            b->setRadioGroupId (radioId);
+            const auto ac = accents[(size_t) juce::jmin (i, (int) accents.size() - 1)];
+            b->setColour (juce::TextButton::buttonOnColourId, ac);
+            b->setColour (juce::TextButton::textColourOnId, ac.getPerceivedBrightness() > 0.55f ? juce::Colour (0xff101114) : juce::Colours::white);
+            if (hint) b->getProperties().set ("hint", (juce::int64) ac.getARGB());
+            b->onClick = [this, i] { att->setValueAsCompleteGesture ((float) i); };
+            addAndMakeVisible (*b);
+            buttons.push_back (std::move (b));
+        }
+        att = std::make_unique<juce::ParameterAttachment> (*param, [this] (float v)
+        {
+            const int idx = (int) std::round (v);
+            for (size_t k = 0; k < buttons.size(); ++k)
+                buttons[k]->setToggleState ((int) k == idx, juce::dontSendNotification);
+            if (onChange) onChange (idx);
+        });
+    }
+
+    void start() { att->sendInitialUpdate(); }
+
+    void resized() override
+    {
+        const int n = (int) buttons.size();
+        const int bw = (getWidth() - gap * (cols - 1)) / cols;
+        for (int i = 0; i < n; ++i)
+            buttons[(size_t) i]->setBounds ((i % cols) * (bw + gap), (i / cols) * (rowH + gap), bw, rowH);
+    }
+
+    std::function<void (int)> onChange;
+
+private:
+    int cols, rowH, gap;
+    std::vector<std::unique_ptr<juce::TextButton>> buttons;
+    std::unique_ptr<juce::ParameterAttachment> att;
+};
+
+//==============================================================================
+// Boton que escribe 0 / 10 en un parametro float (para los "switches" Ultra Lo / Ultra Hi)
+class FloatToggle : public juce::TextButton
+{
+public:
+    FloatToggle (APVTS& apvts, const juce::String& pid, const juce::String& text)
+    {
+        setButtonText (text);
+        setClickingTogglesState (true);
+        att = std::make_unique<juce::ParameterAttachment> (*apvts.getParameter (pid), [this] (float v)
+        {
+            setToggleState (v > 5.0f, juce::dontSendNotification);
+        });
+        onClick = [this] { att->setValueAsCompleteGesture (getToggleState() ? 10.0f : 0.0f); };
+        att->sendInitialUpdate();
+    }
+private:
+    std::unique_ptr<juce::ParameterAttachment> att;
+};
+
+//==============================================================================
+// Caja de un modulo (panel con titulo). Los modulos de efectos se arrastran por el encabezado.
+class ModuleBox : public juce::Component
+{
+public:
+    ModuleBox (const juce::String& t, juce::Colour c, bool canDrag) : title (t), col (c), draggable (canDrag) {}
+
+    std::function<void (juce::Graphics&, juce::Rectangle<int>)> extraPaint;
+    std::function<void (ModuleBox&, const juce::MouseEvent&)> onDragStart, onDragMove, onDragEnd;
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colour (0xff15171c));
+        g.fillRoundedRectangle (r, 10.0f);
+        g.setColour (juce::Colour (0xff262930));
+        g.drawRoundedRectangle (r.reduced (0.5f), 10.0f, 1.0f);
+        juce::Path top;
+        top.addRoundedRectangle (0.0f, 0.0f, r.getWidth(), 4.0f, 10.0f, 10.0f, true, true, false, false);
+        g.setColour (col);
+        g.fillPath (top);
+        g.setFont (fnt (12.5f, juce::Font::bold));
+        g.drawText (title, draggable ? 22 : 18, 12, 200, 18, juce::Justification::centredLeft);
+        if (draggable)
+        {
+            g.setColour (juce::Colour (0xff5d636d));
+            for (int cx = 0; cx < 2; ++cx)
+                for (int cy = 0; cy < 3; ++cy)
+                    g.fillEllipse (8.0f + (float) cx * 5.0f, 14.0f + (float) cy * 5.0f, 2.6f, 2.6f);
+        }
+        if (extraPaint) extraPaint (g, getLocalBounds());
+    }
+
+    void mouseMove (const juce::MouseEvent& e) override
+    {
+        setMouseCursor (draggable && e.y < 34 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (draggable && e.y < 34) { dragging = true; if (onDragStart) onDragStart (*this, e); }
+    }
+    void mouseDrag (const juce::MouseEvent& e) override { if (dragging && onDragMove) onDragMove (*this, e); }
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (dragging) { dragging = false; if (onDragEnd) onDragEnd (*this, e); }
+    }
+
+private:
+    juce::String title;
+    juce::Colour col;
+    bool draggable, dragging = false;
+};
+
+//==============================================================================
+class JustAnAmpEditor::Content : public juce::Component, private juce::Timer
+{
+public:
+    Content (JustAnAmpProcessor& p, JAHeadLookAndFeel& l, std::function<void (float)> scaleCb)
+        : proc (p), laf (l), setScale (std::move (scaleCb))
+    {
+        const void* data[4]  = { BinaryData::amp_pulga_jpg, BinaryData::amp_notfieldy_jpg, BinaryData::amp_roagu_jpg, BinaryData::amp_ryan_jpg };
+        const int   sizes[4] = { BinaryData::amp_pulga_jpgSize, BinaryData::amp_notfieldy_jpgSize, BinaryData::amp_roagu_jpgSize, BinaryData::amp_ryan_jpgSize };
+        for (int i = 0; i < 4; ++i) heads[i] = juce::ImageCache::getFromMemory (data[i], sizes[i]);
+
+        // --- Presets
+        prevBtn.setButtonText ("<"); nextBtn.setButtonText (">"); presetBtn.setButtonText ("");
+        presetBtn.getProperties().set ("small", true);
+        prevBtn.setBounds (186, 15, 24, 30); presetBtn.setBounds (214, 15, 140, 30); nextBtn.setBounds (358, 15, 24, 30);
+        prevBtn.onClick = [this] { stepPreset (-1); };
+        nextBtn.onClick = [this] { stepPreset (1); };
+        presetBtn.onClick = [this] { showPresetMenu(); };
+        for (auto* b : { &prevBtn, &presetBtn, &nextBtn }) addAndMakeVisible (*b);
+        lastPreset = proc.getCurrentProgram();
+        presetBtn.setButtonText (jah::presetName (lastPreset));
+        startTimerHz (5);
+
+        // --- Selector de head
+        std::vector<juce::Colour> headCols;
+        for (int i = 0; i < 4; ++i) headCols.push_back (skinFor (i).accent);
+        headStrip = std::make_unique<ChoiceStrip> (p.apvts, "head", juce::StringArray { "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar" },
+                                                   headCols, 4, 38, 8, 201, true);
+        headStrip->setBounds (392, 12, 476, 38);
+        for (int i = 0; i < headStrip->getNumChildComponents(); ++i)
+            headStrip->getChildComponent (i)->getProperties().set ("small", true);
+        addAndMakeVisible (*headStrip);
+
+        // --- Gate + compresor
+        dynBox = std::make_unique<ModuleBox> ("GATE + COMPRESSOR", colDyn, false);
+        dynBox->setBounds (24, 72, 612, 190);
+        dynBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
+        {
+            g.setColour (juce::Colour (0xff2a2d34));
+            g.drawVerticalLine (158, 44.0f, 176.0f);
+            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f, juce::Font::bold));
+            g.drawText ("GATE", 12, 40, 60, 16, juce::Justification::centredLeft);
+        };
+        addAndMakeVisible (*dynBox);
+        addKnob (*dynBox, "gthr", "THRESH",  8, 78, 70, 54, false, colDyn, fmtGate);
+        addKnob (*dynBox, "grel", "RELEASE", 80, 78, 70, 54, false, colDyn, fmtMs);
+        compStrip = std::make_unique<ChoiceStrip> (p.apvts, "ctype", juce::StringArray { "Off", "Opto", "FET" },
+                                                   std::vector<juce::Colour> { colDyn }, 3, 28, 6, 205, false);
+        compStrip->setBounds (168, 36, 240, 28);
+        dynBox->addAndMakeVisible (*compStrip);
+        {
+            const char* id[] = { "cthr", "cratio", "catk", "crel", "cblend", "cgain" };
+            const char* nm[] = { "THRESH", "RATIO", "ATTACK", "RELEASE", "BLEND", "MAKEUP" };
+            std::function<juce::String (double)> fm[] = { fmtDb, fmtRatio, fmtMs1, fmtMs, fmtPct, fmtDb };
+            for (int i = 0; i < 6; ++i)
+                compKnobs.push_back (addKnob (*dynBox, id[i], nm[i], 164 + i * 74, 78, 72, 54, false, colDyn, fm[i]));
+        }
+
+        // --- Pedal
+        pedBox = std::make_unique<ModuleBox> ("PEDAL", colPedal, false);
+        pedBox->setBounds (648, 72, 528, 190);
+        pedBox->extraPaint = [this] (juce::Graphics& g, juce::Rectangle<int>)
+        {
+            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
+            const char* d[] = { "Sin pedal", "Preamp valvular con mezcla Blend", "Distorsi\xc3\xb3n en paralelo: graves intactos" };
+            g.drawText (juce::String::fromUTF8 (d[pedalIdx]), 330, 40, 190, 28, juce::Justification::centredLeft);
+        };
+        addAndMakeVisible (*pedBox);
+        pedStrip = std::make_unique<ChoiceStrip> (p.apvts, "pedal", juce::StringArray { "Off", "SansAmp", "Darkglass" },
+                                                  std::vector<juce::Colour> { colPedal }, 3, 28, 6, 202, false);
+        pedStrip->setBounds (18, 36, 300, 28);
+        pedBox->addAndMakeVisible (*pedStrip);
+        {
+            const char* id[] = { "pdrive", "pblend", "plevel", "pbass", "ptreble", "pextra" };
+            const char* nm[] = { "DRIVE", "BLEND", "LEVEL", "BASS", "TREBLE", "PRESENCE" };
+            for (int i = 0; i < 6; ++i)
+                pedKnobs.push_back (addKnob (*pedBox, id[i], nm[i], 12 + i * 84, 78, 82, 58, false, colPedal, i == 2 ? fmtDb : fmt1));
+        }
+
+        // --- Controles del amp (se acomodan segun el head)
+        {
+            const char* id[] = { "gain", "bass", "mid", "himid", "treble", "contour", "ulo", "uhi", "freq", "master" };
+            for (auto* pid : id)
+                ampKnobs[pid] = addKnob (*this, pid, pid, 0, 0, 100, 64, true, juce::Colours::white,
+                                         juce::String (pid) == "master" ? fmtDb : (juce::String (pid) == "freq" ? fmtFreq : fmt1));
+        }
+        boostBtn.setButtonText ("BOOST"); brightBtn.setButtonText ("BRIGHT");
+        for (auto* b : { &boostBtn, &brightBtn }) { b->setClickingTogglesState (true); addChildComponent (*b); }
+        boostAtt = std::make_unique<APVTS::ButtonAttachment> (p.apvts, "boost", boostBtn);
+        brightAtt = std::make_unique<APVTS::ButtonAttachment> (p.apvts, "bright", brightBtn);
+        uloTog = std::make_unique<FloatToggle> (p.apvts, "ulo", "ULTRA LO");
+        uhiTog = std::make_unique<FloatToggle> (p.apvts, "uhi", "ULTRA HI");
+        addChildComponent (*uloTog); addChildComponent (*uhiTog);
+        for (int i = 0; i < 7; ++i)
+        {
+            auto& s = eqSl[(size_t) i];
+            s.setSliderStyle (juce::Slider::LinearVertical);
+            s.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
+            s.setScrollWheelEnabled (true);
+            s.setDoubleClickReturnValue (true, 0.0);
+            addChildComponent (s);
+            eqAtt.push_back (std::make_unique<APVTS::SliderAttachment> (p.apvts, "eq" + juce::String (i + 1), s));
+        }
+
+        // --- Mod (arrastrable)
+        modBox = std::make_unique<ModuleBox> ("MOD", colMod, true);
+        modBox->setSize (modW, 210);
+        modStrip = std::make_unique<ChoiceStrip> (p.apvts, "mod", juce::StringArray { "Off", "Chorus", "Flanger", "Phaser", "Octaver", "Env Filter" },
+                                                  std::vector<juce::Colour> { colMod }, 4, 28, 6, 203, false);
+        modStrip->setBounds (18, 36, 384, 62);
+        modBox->addAndMakeVisible (*modStrip);
+        {
+            const char* id[] = { "mrate", "mdepth", "mshape", "mmix" };
+            const char* nm[] = { "RATE", "DEPTH", "SHAPE", "MIX" };
+            for (int i = 0; i < 4; ++i)
+                modKnobs.push_back (addKnob (*modBox, id[i], nm[i], 10 + i * 100, 108, 90, 58, false, colMod, i == 3 ? fmtPct : fmt1));
+        }
+
+        // --- Delay (arrastrable, con bypass y TAP)
+        delayBox = std::make_unique<ModuleBox> ("DELAY", colDelay, true);
+        delayBox->setSize (delayW, 210);
+        delayBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
+        {
+            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
+            g.drawText (juce::String::fromUTF8 ("Est\xc3\xa9reo ping-pong"), 12, 74, delayW - 24, 16, juce::Justification::centred);
+        };
+        for (int i = 0; i < 3; ++i)
+        {
+            const char* id[] = { "dtime", "dfb", "dmix" }; const char* nm[] = { "TIME", "FEEDBACK", "MIX" };
+            delayKnobs.push_back (addKnob (*delayBox, id[i], nm[i], 20 + i * 110, 108, 90, 58, false, colDelay, i == 0 ? fmtMs : fmtPct));
+        }
+        tapButton.setButtonText ("TAP");
+        tapButton.getProperties().set ("hint", (juce::int64) colDelay.getARGB());
+        tapButton.setBounds ((delayW - 118) / 2, 36, 118, 32);
+        tapButton.onClick = [this] { tap(); };
+        delayBox->addAndMakeVisible (tapButton);
+        setupPower (*delayBox, delayOn, "don", colDelay, delayW, delayKnobs, &tapButton);
+
+        // --- Reverb (arrastrable, con bypass)
+        reverbBox = std::make_unique<ModuleBox> ("REVERB", colReverb, true);
+        reverbBox->setSize (reverbW, 210);
+        reverbBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
+        {
+            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
+            g.drawText (juce::String::fromUTF8 ("Reverb FDN de 8 l\xc3\xadneas"), 12, 54, reverbW - 24, 18, juce::Justification::centred);
+        };
+        {
+            const char* id[] = { "rsize", "rdamp", "rmix" }; const char* nm[] = { "SIZE", "DAMP", "MIX" };
+            for (int i = 0; i < 3; ++i)
+                reverbKnobs.push_back (addKnob (*reverbBox, id[i], nm[i], 12 + i * 108, 108, 90, 58, false, colReverb, i == 2 ? fmtPct : fmt1));
+        }
+        setupPower (*reverbBox, reverbOn, "ron", colReverb, reverbW, reverbKnobs, nullptr);
+
+        byId[0] = modBox.get(); byId[1] = delayBox.get(); byId[2] = reverbBox.get();
+        for (int id = 0; id < 3; ++id)
+        {
+            addAndMakeVisible (*byId[id]);
+            byId[id]->onDragStart = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragStart (id, b, e); };
+            byId[id]->onDragMove  = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragMove (id, b, e); };
+            byId[id]->onDragEnd   = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragEnd (id, b, e); };
+        }
+        orderAtt = std::make_unique<juce::ParameterAttachment> (*p.apvts.getParameter ("fxorder"), [this] (float v)
+        {
+            const int o = juce::jlimit (0, 5, (int) std::round (v));
+            for (int k = 0; k < 3; ++k) order[k] = perms[o][k];
+            if (dragId < 0) layoutModules (initialised, -1);
+        });
+        orderAtt->sendInitialUpdate();
+        initialised = true;
+
+        // --- Escala
+        const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+        const char* labels[] = { "75%", "100%", "125%", "150%" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto& b = scaleButtons[(size_t) i];
+            b.setButtonText (labels[i]);
+            b.setClickingTogglesState (true);
+            b.setRadioGroupId (101);
+            b.setBounds (940 + i * 58, 16, 52, 30);
+            const float s = scales[i];
+            b.onClick = [this, s] { setScale (s); };
+            addAndMakeVisible (b);
+        }
+
+        headStrip->onChange = [this] (int i) { applySkin (i); };
+        pedStrip->onChange = [this] (int i)
+        {
+            pedalIdx = i;
+            pedKnobs[5]->setName (i == 2 ? "GRUNT" : "PRESENCE");
+            for (auto* k : pedKnobs) k->setActive (i != 0);
+            pedBox->repaint();
+        };
+        compStrip->onChange = [this] (int i)
+        {
+            for (size_t k = 0; k < compKnobs.size(); ++k)
+                compKnobs[k]->setActive (i != 0 && ! (k == 1 && i == 1));   // el ratio del Opto es fijo
+        };
+        modStrip->onChange = [this] (int i)
+        {
+            static const char* nm[6][4] = { { "RATE", "DEPTH", "SHAPE", "MIX" }, { "RATE", "DEPTH", "SHAPE", "MIX" }, { "RATE", "DEPTH", "SHAPE", "MIX" },
+                                            { "RATE", "DEPTH", "SHAPE", "MIX" }, { "OCT 1", "OCT 2", "TONE", "DIRECT" }, { "SENS", "RANGE", "RES", "MIX" } };
+            static const bool on[6][4] = { { 0, 0, 0, 0 }, { 1, 1, 0, 1 }, { 1, 1, 0, 1 }, { 1, 1, 0, 1 }, { 1, 1, 1, 1 }, { 1, 1, 1, 1 } };
+            const int t = juce::jlimit (0, 5, i);
+            for (int k = 0; k < 4; ++k) { modKnobs[(size_t) k]->setName (nm[t][k]); modKnobs[(size_t) k]->setActive (on[t][k]); }
+        };
+        headStrip->start();
+        pedStrip->start();
+        compStrip->start();
+        modStrip->start();
+    }
+
+    ~Content() override { stopTimer(); }
+
+    void updateScaleHighlight (float s)
+    {
+        const float scales[] = { 0.75f, 1.0f, 1.25f, 1.5f };
+        for (int i = 0; i < 4; ++i)
+            scaleButtons[(size_t) i].setToggleState (std::abs (scales[i] - s) < 0.02f, juce::dontSendNotification);
+    }
+
+    void applySkin (int s)
+    {
+        skin = juce::jlimit (0, 3, s);
+        laf.skin = skin;
+        const auto& sk = skinFor (skin);
+        for (auto& kv : ampKnobs) kv.second->setColours (sk.label, sk.value);
+        for (auto* b : { (juce::TextButton*) &boostBtn, (juce::TextButton*) &brightBtn, (juce::TextButton*) uloTog.get(), (juce::TextButton*) uhiTog.get() })
+        {
+            b->setColour (juce::TextButton::buttonOnColourId, sk.accent);
+            b->setColour (juce::TextButton::textColourOnId, sk.accent.getPerceivedBrightness() > 0.55f ? juce::Colour (0xff101114) : juce::Colours::white);
+        }
+        layoutAmp();
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto& sk = skinFor (skin);
+
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff1a1c21), 600.0f, 0.0f, juce::Colour (0xff0b0c0f), 600.0f, (float) designH, false));
+        g.fillAll();
+        g.setGradientFill (juce::ColourGradient (sk.accent.withAlpha (0.13f), 600.0f, -40.0f, sk.accent.withAlpha (0.0f), 600.0f, 420.0f, true));
+        g.fillAll();
+        g.setColour (juce::Colour (0xff2a2d34));
+        g.drawRect (getLocalBounds(), 1);
+
+        // Logo
+        {
+            const auto f = fnt (22.0f, juce::Font::bold);
+            auto width = [&f] (const juce::String& t)
+            {
+                juce::GlyphArrangement ga;
+                ga.addLineOfText (f, t, 0.0f, 0.0f);
+                return ga.getBoundingBox (0, -1, true).getWidth() + 3.0f;
+            };
+            float x = 26.0f;
+            g.setFont (f);
+            const juce::String parts[] = { "JUST ", "AN", " AMP" };
+            for (int i = 0; i < 3; ++i)
+            {
+                g.setColour (i == 1 ? sk.accent : juce::Colours::white);
+                g.drawText (parts[i], juce::Rectangle<float> (x, 8.0f, 200.0f, 30.0f), juce::Justification::centredLeft);
+                x += width (parts[i]);
+            }
+            g.setColour (juce::Colour (0xff868c96));
+            g.setFont (fnt (10.5f, juce::Font::bold));
+            g.drawText ("BASS AMP SIM  -  VST3", 28, 36, 150, 14, juce::Justification::centredLeft);
+            g.drawText ("ESCALA", 862, 16, 70, 30, juce::Justification::centredRight);
+        }
+
+        // --- Amp: banner del head + panel de controles
+        {
+            const juce::Rectangle<float> amp (24.0f, (float) ampY, 1152.0f, 296.0f);
+            const float imgH = 140.0f;
+            const juce::Rectangle<float> imgR (amp.getX(), amp.getY(), amp.getWidth(), imgH);
+            juce::Path clip;
+            clip.addRoundedRectangle (amp.getX(), amp.getY(), amp.getWidth(), amp.getHeight(), 10.0f, 10.0f, true, true, true, true);
+
+            g.saveState();
+            g.reduceClipRegion (clip);
+            g.setImageResamplingQuality (juce::Graphics::highResamplingQuality);
+            g.drawImage (heads[skin], imgR, juce::RectanglePlacement::stretchToFit);
+
+            const juce::Rectangle<float> strip (amp.getX(), imgR.getBottom(), amp.getWidth(), amp.getBottom() - imgR.getBottom());
+            g.setGradientFill (juce::ColourGradient (sk.stripTop, 0.0f, strip.getY(), sk.stripBottom, 0.0f, strip.getBottom(), false));
+            g.fillRect (strip);
+            g.setColour ((sk.light ? juce::Colours::black : juce::Colours::white).withAlpha (0.04f));
+            for (float yy = strip.getY() + 2.0f; yy < strip.getBottom(); yy += 3.0f)
+                g.drawHorizontalLine ((int) yy, strip.getX(), strip.getRight());
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRect (strip.getX(), strip.getY(), strip.getWidth(), 2.0f);
+            g.setColour (sk.accent.withAlpha (0.85f));
+            g.fillRect (strip.getX(), strip.getY() + 2.0f, strip.getWidth(), 1.5f);
+            g.restoreState();
+
+            g.setColour (juce::Colour (0xff262930));
+            g.drawRoundedRectangle (amp.reduced (0.5f), 10.0f, 1.0f);
+
+            const juce::Rectangle<float> tag (amp.getX() + 74.0f, amp.getY() + 10.0f, 200.0f, 22.0f);
+            g.setColour (juce::Colours::black.withAlpha (0.6f));
+            g.fillRoundedRectangle (tag, 11.0f);
+            g.setColour (sk.accent);
+            g.setFont (fnt (11.0f, juce::Font::bold));
+            g.drawText (juce::String ("AMP  -  ") + juce::String (sk.name).toUpperCase(), tag.toNearestInt(), juce::Justification::centred);
+
+            if (skin == 1)   // etiquetas del ecualizador grafico
+            {
+                static const char* fq[7] = { "45", "110", "280", "700", "1.6k", "3.6k", "8k" };
+                g.setColour (sk.label);
+                g.setFont (fnt (10.5f, juce::Font::bold));
+                for (int i = 0; i < 7; ++i)
+                    g.drawText (fq[i], (int) (24.0f + 700.0f + 66.0f * (float) i - 30.0f), ampY + 140 + 128, 60, 14, juce::Justification::centred);
+                g.drawText ("GRAPHIC EQ", (int) (24.0f + 700.0f - 40.0f), ampY + 140 + 6, 200, 14, juce::Justification::centredLeft);
+            }
+        }
+    }
+
+private:
+    static constexpr int ampY = 274;
+    static constexpr int modW = 420, delayW = 360, reverbW = 342, rowY = 582, rowX0 = 24, rowX1 = 1170, gapPx = 12;
+    static constexpr int perms[6][3] = { {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0} };
+
+    int widthOf (int id) const { return id == 0 ? modW : (id == 1 ? delayW : reverbW); }
+
+    // Disposicion de controles del amp por head: kind 0 perilla, 1 boton, 2 fader del grafico
+    struct Item { const char* pid; const char* label; int kind; float cx; float dy; };
+    static std::vector<Item> ampLayout (int head)
+    {
+        switch (head)
+        {
+            case 0:   // Pulga
+                return { { "gain", "GAIN", 0, 72, 0 }, { "bass", "BASS", 0, 216, 0 }, { "mid", "LO MID", 0, 360, 0 }, { "himid", "HI MID", 0, 504, 0 },
+                         { "treble", "TREBLE", 0, 648, 0 }, { "contour", "CONTOUR", 0, 792, 0 }, { "master", "MASTER", 0, 936, 0 }, { "boost", "BOOST", 1, 1080, 20 } };
+            case 1:   // NotFieldy
+                return { { "gain", "GAIN", 0, 70, 0 }, { "bass", "BASS", 0, 180, 0 }, { "mid", "MID", 0, 290, 0 }, { "treble", "TREBLE", 0, 400, 0 },
+                         { "master", "MASTER", 0, 510, 0 }, { "bright", "BRIGHT", 1, 612, 20 },
+                         { "eq1", "", 2, 700, 0 }, { "eq2", "", 2, 766, 0 }, { "eq3", "", 2, 832, 0 }, { "eq4", "", 2, 898, 0 },
+                         { "eq5", "", 2, 964, 0 }, { "eq6", "", 2, 1030, 0 }, { "eq7", "", 2, 1096, 0 } };
+            case 2:   // RoAguMiSSTruVe
+                return { { "gain", "GAIN", 0, 82, 0 }, { "ulo", "ULTRA LO", 1, 246, 0 }, { "uhi", "ULTRA HI", 1, 246, 46 },
+                         { "bass", "BASS", 0, 410, 0 }, { "mid", "MID", 0, 574, 0 }, { "freq", "FREQ", 0, 738, 0 },
+                         { "treble", "TREBLE", 0, 902, 0 }, { "master", "MASTER", 0, 1066, 0 } };
+            default:  // Ryandemar
+                return { { "gain", "GAIN", 0, 72, 0 }, { "ulo", "ULTRA LO", 0, 216, 0 }, { "bass", "BASS", 0, 360, 0 }, { "treble", "TREBLE", 0, 504, 0 },
+                         { "mid", "MID", 0, 648, 0 }, { "freq", "FREQ", 0, 792, 0 }, { "uhi", "ULTRA HI", 0, 936, 0 }, { "master", "MASTER", 0, 1080, 0 } };
+        }
+    }
+
+    void layoutAmp()
+    {
+        for (auto& kv : ampKnobs) kv.second->setVisible (false);
+        for (auto* c : { (juce::Component*) &boostBtn, (juce::Component*) &brightBtn, (juce::Component*) uloTog.get(), (juce::Component*) uhiTog.get() })
+            c->setVisible (false);
+        for (auto& s : eqSl) s.setVisible (false);
+
+        const int y0 = ampY + 140;
+        for (const auto& it : ampLayout (skin))
+        {
+            const int cx = 24 + (int) it.cx;
+            const juce::String pid (it.pid);
+            if (it.kind == 0)
+            {
+                auto* u = ampKnobs[pid];
+                u->setName (it.label);
+                u->setBounds (cx - 50, y0 + 10, 100, u->totalHeight());
+                u->setVisible (true);
+            }
+            else if (it.kind == 1)
+            {
+                juce::TextButton* b = pid == "boost" ? &boostBtn : pid == "bright" ? &brightBtn : pid == "ulo" ? (juce::TextButton*) uloTog.get() : (juce::TextButton*) uhiTog.get();
+                b->setBounds (cx - 48, y0 + 22 + (int) it.dy, 96, 32);
+                b->setVisible (true);
+            }
+            else
+            {
+                const int idx = pid.getTrailingIntValue() - 1;
+                eqSl[(size_t) idx].setBounds (cx - 16, y0 + 24, 32, 100);
+                eqSl[(size_t) idx].setVisible (true);
+            }
+        }
+    }
+
+    void layoutModules (bool animate, int skipId)
+    {
+        int x = rowX0;
+        for (int k = 0; k < 3; ++k)
+        {
+            const int id = order[k];
+            const juce::Rectangle<int> r (x, rowY, widthOf (id), 210);
+            x += widthOf (id) + gapPx;
+            if (id == skipId) continue;
+            if (animate) animator.animateComponent (byId[id], r, 1.0f, 140, false, 1.0, 1.0);
+            else byId[id]->setBounds (r);
+        }
+    }
+
+    void dragStart (int id, ModuleBox& b, const juce::MouseEvent& e)
+    {
+        dragId = id;
+        dragOffset = e.getEventRelativeTo (this).x - b.getX();
+        animator.cancelAllAnimations (false);
+        b.toFront (false);
+    }
+    void dragMove (int id, ModuleBox& b, const juce::MouseEvent& e)
+    {
+        const int nx = juce::jlimit (rowX0, rowX1 - b.getWidth(), e.getEventRelativeTo (this).x - dragOffset);
+        b.setTopLeftPosition (nx, rowY);
+        std::pair<int, int> c[3];
+        int x = rowX0;
+        for (int k = 0; k < 3; ++k)
+        {
+            const int mid = order[k];
+            c[k] = { mid == id ? nx + b.getWidth() / 2 : x + widthOf (mid) / 2, mid };
+            x += widthOf (mid) + gapPx;
+        }
+        std::sort (c, c + 3);
+        int newOrder[3] = { c[0].second, c[1].second, c[2].second };
+        if (newOrder[0] != order[0] || newOrder[1] != order[1] || newOrder[2] != order[2])
+        {
+            for (int k = 0; k < 3; ++k) order[k] = newOrder[k];
+            layoutModules (true, id);
+        }
+    }
+    void dragEnd (int, ModuleBox&, const juce::MouseEvent&)
+    {
+        dragId = -1;
+        layoutModules (true, -1);
+        for (int o = 0; o < 6; ++o)
+            if (perms[o][0] == order[0] && perms[o][1] == order[1] && perms[o][2] == order[2])
+                orderAtt->setValueAsCompleteGesture ((float) o);
+    }
+
+    void setupPower (ModuleBox& box, juce::TextButton& btn, const char* pid, juce::Colour col, int boxW,
+                     std::vector<KnobUnit*>& ks, juce::TextButton* extra)
+    {
+        btn.setClickingTogglesState (true);
+        btn.setColour (juce::TextButton::buttonOnColourId, col);
+        btn.getProperties().set ("small", true);
+        btn.setBounds (boxW - 18 - 46, 8, 46, 22);
+        auto refresh = [&btn, ks, extra] ()
+        {
+            const bool on = btn.getToggleState();
+            btn.setButtonText (on ? "ON" : "OFF");
+            for (auto* k : ks) k->setActive (on);
+            if (extra != nullptr) extra->setEnabled (on);
+        };
+        btn.onStateChange = refresh;
+        box.addAndMakeVisible (btn);
+        powerAtts.push_back (std::make_unique<APVTS::ButtonAttachment> (proc.apvts, pid, btn));
+        refresh();
+    }
+
+    void stepPreset (int d)
+    {
+        const int n = jah::presetCount();
+        const int cur = proc.getCurrentProgram();
+        loadPreset (((cur + d) % n + n) % n);
+    }
+    void loadPreset (int i)
+    {
+        proc.loadPreset (i);
+        lastPreset = i;
+        presetBtn.setButtonText (jah::presetName (i));
+    }
+    void showPresetMenu()
+    {
+        juce::PopupMenu m;
+        const char* groups[] = { "", "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar", "Especiales" };
+        for (int i = 0; i < jah::presetCount(); ++i)
+        {
+            if (i == 0 || i == 1 || i == 4 || i == 7 || i == 10 || i == 13)
+            {
+                const int g = i == 0 ? 0 : (i == 13 ? 5 : (i + 2) / 3);
+                if (i > 0) m.addSeparator();
+                if (g > 0) m.addSectionHeader (groups[g]);
+            }
+            m.addItem (i + 1, jah::presetName (i), true, i == proc.getCurrentProgram());
+        }
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetBtn).withMinimumWidth (240),
+                         [this] (int r) { if (r > 0) loadPreset (r - 1); });
+    }
+    void timerCallback() override
+    {
+        const int cur = proc.getCurrentProgram();
+        if (cur != lastPreset) { lastPreset = cur; presetBtn.setButtonText (jah::presetName (cur)); }
+    }
+
+    void tap()
+    {
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (! taps.empty() && now - taps.back() > 2000.0) taps.clear();
+        taps.push_back (now);
+        if (taps.size() > 5) taps.erase (taps.begin());
+        if (taps.size() < 2) return;
+        const double ms = (taps.back() - taps.front()) / (double) (taps.size() - 1);
+        if (auto* prm = proc.apvts.getParameter ("dtime"))
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (prm->convertTo0to1 ((float) juce::jlimit (40.0, 1200.0, ms)));
+            prm->endChangeGesture();
+        }
+    }
+
+    KnobUnit* addKnob (juce::Component& parent, const juce::String& pid, const juce::String& name, int x, int y, int w, int size, bool amp,
+                       juce::Colour col, std::function<juce::String (double)> fmt)
+    {
+        auto u = std::make_unique<KnobUnit> (proc.apvts, pid, name, size, amp, col, std::move (fmt));
+        u->setBounds (x, y, w, u->totalHeight());
+        parent.addAndMakeVisible (*u);
+        auto* raw = u.get();
+        knobs.push_back (std::move (u));
+        return raw;
+    }
+
+    JustAnAmpProcessor& proc;
+    JAHeadLookAndFeel& laf;
+    std::function<void (float)> setScale;
+    int skin = 0, pedalIdx = 0, lastPreset = 0, dragId = -1, dragOffset = 0;
+    int order[3] = { 0, 1, 2 };
+    bool initialised = false;
+    juce::Image heads[4];
+    std::unique_ptr<ChoiceStrip> headStrip, pedStrip, compStrip, modStrip;
+    std::unique_ptr<ModuleBox> dynBox, pedBox, modBox, delayBox, reverbBox;
+    ModuleBox* byId[3] = { nullptr, nullptr, nullptr };
+    std::vector<std::unique_ptr<KnobUnit>> knobs;
+    std::map<juce::String, KnobUnit*> ampKnobs;
+    std::vector<KnobUnit*> compKnobs, pedKnobs, modKnobs, delayKnobs, reverbKnobs;
+    juce::TextButton tapButton, prevBtn, nextBtn, presetBtn, delayOn, reverbOn, boostBtn, brightBtn;
+    std::unique_ptr<FloatToggle> uloTog, uhiTog;
+    std::unique_ptr<APVTS::ButtonAttachment> boostAtt, brightAtt;
+    std::array<juce::Slider, 7> eqSl;
+    std::vector<std::unique_ptr<APVTS::SliderAttachment>> eqAtt;
+    std::vector<std::unique_ptr<APVTS::ButtonAttachment>> powerAtts;
+    std::unique_ptr<juce::ParameterAttachment> orderAtt;
+    juce::ComponentAnimator animator;
+    std::vector<double> taps;
+    std::array<juce::TextButton, 4> scaleButtons;
+};
+
+JustAnAmpEditor::JustAnAmpEditor (JustAnAmpProcessor& p) : AudioProcessorEditor (&p), proc (p)
+{
+    // Leer el tamaño guardado antes de nada: setResizeLimits() dispara resized() y lo pisaría.
+    const int savedW = juce::jlimit (600, 1800, (int) proc.apvts.state.getProperty ("uiWidth", designW));
+    content = std::make_unique<Content> (p, laf, [this] (float s)
+    {
+        setSize (juce::roundToInt ((float) designW * s), juce::roundToInt ((float) designH * s));
+    });
+    content->setLookAndFeel (&laf);
+    addAndMakeVisible (*content);
+
+    setResizeLimits (600, 405, 1800, 1215);
+    setResizable (true, true);
+    getConstrainer()->setFixedAspectRatio ((double) designW / (double) designH);
+
+    setSize (savedW, juce::roundToInt ((double) savedW * designH / designW));
+}
+
+JustAnAmpEditor::~JustAnAmpEditor()
+{
+    content->setLookAndFeel (nullptr);
+}
+
+void JustAnAmpEditor::resized()
+{
+    const float s = (float) getWidth() / (float) designW;
+    content->setBounds (0, 0, designW, designH);
+    content->setTransform (juce::AffineTransform::scale (s));
+    content->updateScaleHighlight (s);
+    proc.apvts.state.setProperty ("uiWidth", getWidth(), nullptr);
+}
