@@ -46,6 +46,11 @@ private:
     jah::FxChain fx;
     jah::NoiseGate gate;
     jah::Compressor comp;
+
+public:
+    // Medidores (pico lineal con caida suave) y reduccion de ganancia del compresor en dB
+    std::atomic<float> meterIn { 0.0f }, meterOut { 0.0f }, meterGr { 0.0f };
+private:
     std::vector<float> mono;
     juce::SmoothedValue<float> master;
 

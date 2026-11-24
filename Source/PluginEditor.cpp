@@ -13,7 +13,7 @@ static juce::Font fnt (float h, int style = juce::Font::plain)
 //==============================================================================
 const Skin& jahead::skinFor (int head)
 {
-    static const Skin skins[4] =
+    static const Skin skins[6] =
     {
         // Pulga: frente amarillo, perillas negras con puntero blanco
         { "Pulga",          juce::Colour (0xfff2c230), juce::Colour (0xfff2c43a), juce::Colour (0xffd9a41a),
@@ -30,9 +30,17 @@ const Skin& jahead::skinFor (int head)
         // Ryandemar: panel plateado con perillas rojas facetadas
         { "Ryandemar",      juce::Colour (0xffd1283c), juce::Colour (0xffdcdee2), juce::Colour (0xffb4b8be),
                             juce::Colour (0xffe8586a), juce::Colour (0xff5c0914), juce::Colour (0xffffffff),
-                            juce::Colour (0xff1f2024), juce::Colour (0xffa01828), true }
+                            juce::Colour (0xff1f2024), juce::Colour (0xffa01828), true },
+        // Canciller: dos unidades de rack (limpio / sucio), acento turquesa
+        { "Canciller",      juce::Colour (0xff19c3d6), juce::Colour (0xff20262b), juce::Colour (0xff0d1013),
+                            juce::Colour (0xff8aeaf5), juce::Colour (0xff0b5b66), juce::Colour (0xff04222a),
+                            juce::Colour (0xffb4e4ea), juce::Colour (0xff5fe0f0), false },
+        // TimmyC: tolex quemado y tela naranja, perillas de tapa cromada
+        { "TimmyC",         juce::Colour (0xffff5a1f), juce::Colour (0xff25201e), juce::Colour (0xff100d0c),
+                            juce::Colour (0xfff4f6f8), juce::Colour (0xff737a83), juce::Colour (0xff101010),
+                            juce::Colour (0xffecd5c7), juce::Colour (0xffff8a55), false }
     };
-    return skins[juce::jlimit (0, 3, head)];
+    return skins[juce::jlimit (0, 5, head)];
 }
 
 //==============================================================================
@@ -128,7 +136,8 @@ static void drawAmpKnob (juce::Graphics& g, int skin, const Skin& sk, juce::Poin
     g.setColour (juce::Colours::black.withAlpha (0.5f));
     g.fillEllipse (circle (R * 1.04f).translated (0.0f, 2.5f));
 
-    if (skin == 0)   // Pulga: negra con falda estriada y cuerpo brillante
+    const int style = skin == 0 ? 0 : ((skin == 2 || skin == 5) ? 2 : 1);
+    if (style == 0)   // Pulga: negra con falda estriada y cuerpo brillante
     {
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff3a3a3a), c.x - R * 0.5f, c.y - R * 0.6f, juce::Colour (0xff050505), c.x + R * 0.6f, c.y + R * 0.7f, false));
         g.fillEllipse (circle (R * 1.04f));
@@ -142,7 +151,7 @@ static void drawAmpKnob (juce::Graphics& g, int skin, const Skin& sk, juce::Poin
         g.setColour (sk.pointer);
         g.drawLine (lineAt (R * 0.12f, R * 1.0f, angle), 3.4f);
     }
-    else if (skin == 2)   // RoAguMiSSTruVe: base negra y tapa cromada
+    else if (style == 2)   // RoAguMiSSTruVe / TimmyC: base negra y tapa cromada
     {
         g.setGradientFill (juce::ColourGradient (juce::Colour (0xff2c2c2e), c.x - R * 0.5f, c.y - R * 0.6f, juce::Colour (0xff060606), c.x + R * 0.6f, c.y + R * 0.7f, false));
         g.fillEllipse (circle (R * 1.04f));
@@ -160,7 +169,7 @@ static void drawAmpKnob (juce::Graphics& g, int skin, const Skin& sk, juce::Poin
     }
     else   // NotFieldy (verde) y Ryandemar (rojo): perilla facetada
     {
-        if (skin == 1)
+        if (skin == 1 || skin == 4)
         {
             g.setColour (sk.accent.withAlpha (0.22f));
             g.fillEllipse (circle (R * 1.16f));
@@ -431,9 +440,11 @@ public:
     Content (JustAnAmpProcessor& p, JAHeadLookAndFeel& l, std::function<void (float)> scaleCb)
         : proc (p), laf (l), setScale (std::move (scaleCb))
     {
-        const void* data[4]  = { BinaryData::amp_pulga_jpg, BinaryData::amp_notfieldy_jpg, BinaryData::amp_roagu_jpg, BinaryData::amp_ryan_jpg };
-        const int   sizes[4] = { BinaryData::amp_pulga_jpgSize, BinaryData::amp_notfieldy_jpgSize, BinaryData::amp_roagu_jpgSize, BinaryData::amp_ryan_jpgSize };
-        for (int i = 0; i < 4; ++i) heads[i] = juce::ImageCache::getFromMemory (data[i], sizes[i]);
+        const void* data[6]  = { BinaryData::amp_pulga_jpg, BinaryData::amp_notfieldy_jpg, BinaryData::amp_roagu_jpg, BinaryData::amp_ryan_jpg,
+                                 BinaryData::amp_canciller_jpg, BinaryData::amp_timmyc_jpg };
+        const int   sizes[6] = { BinaryData::amp_pulga_jpgSize, BinaryData::amp_notfieldy_jpgSize, BinaryData::amp_roagu_jpgSize, BinaryData::amp_ryan_jpgSize,
+                                 BinaryData::amp_canciller_jpgSize, BinaryData::amp_timmyc_jpgSize };
+        for (int i = 0; i < 6; ++i) heads[i] = juce::ImageCache::getFromMemory (data[i], sizes[i]);
 
         // --- Presets
         prevBtn.setButtonText ("<"); nextBtn.setButtonText (">"); presetBtn.setButtonText ("");
@@ -445,27 +456,33 @@ public:
         for (auto* b : { &prevBtn, &presetBtn, &nextBtn }) addAndMakeVisible (*b);
         lastPreset = proc.getCurrentProgram();
         presetBtn.setButtonText (jah::presetName (lastPreset));
-        startTimerHz (5);
+        startTimerHz (30);
 
         // --- Selector de head
         std::vector<juce::Colour> headCols;
-        for (int i = 0; i < 4; ++i) headCols.push_back (skinFor (i).accent);
-        headStrip = std::make_unique<ChoiceStrip> (p.apvts, "head", juce::StringArray { "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar" },
-                                                   headCols, 4, 38, 8, 201, true);
-        headStrip->setBounds (392, 12, 476, 38);
-        for (int i = 0; i < headStrip->getNumChildComponents(); ++i)
-            headStrip->getChildComponent (i)->getProperties().set ("small", true);
+        for (int i = 0; i < 6; ++i) headCols.push_back (skinFor (i).accent);
+        headStrip = std::make_unique<ChoiceStrip> (p.apvts, "head", juce::StringArray { "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar", "Canciller", "TimmyC" },
+                                                   headCols, 6, 34, 8, 201, true);
+        headStrip->setBounds (24, 56, 1152, 34);
         addAndMakeVisible (*headStrip);
 
         // --- Gate + compresor
         dynBox = std::make_unique<ModuleBox> ("GATE + COMPRESSOR", colDyn, false);
-        dynBox->setBounds (24, 72, 612, 190);
-        dynBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
+        dynBox->setBounds (24, 108, 612, 190);
+        dynBox->extraPaint = [this] (juce::Graphics& g, juce::Rectangle<int>)
         {
             g.setColour (juce::Colour (0xff2a2d34));
             g.drawVerticalLine (158, 44.0f, 176.0f);
             g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f, juce::Font::bold));
             g.drawText ("GATE", 12, 40, 60, 16, juce::Justification::centredLeft);
+            g.drawText ("GR", 424, 40, 22, 14, juce::Justification::centredLeft);
+            g.setColour (juce::Colour (0xff0d0e11));
+            g.fillRoundedRectangle (448.0f, 42.0f, 120.0f, 10.0f, 3.0f);
+            const float f = juce::jlimit (0.0f, 1.0f, grDb / 20.0f);
+            g.setColour (juce::Colour (0xffff8a5c));
+            g.fillRoundedRectangle (568.0f - 120.0f * f, 42.0f, 120.0f * f, 10.0f, 3.0f);
+            g.setColour (juce::Colour (0xff868c96)); g.setFont (fnt (10.0f));
+            g.drawText (juce::String (grDb, 1) + " dB", 448, 54, 120, 12, juce::Justification::centredRight);
         };
         addAndMakeVisible (*dynBox);
         addKnob (*dynBox, "gthr", "THRESH",  8, 78, 70, 54, false, colDyn, fmtGate);
@@ -484,12 +501,13 @@ public:
 
         // --- Pedal
         pedBox = std::make_unique<ModuleBox> ("PEDAL", colPedal, false);
-        pedBox->setBounds (648, 72, 528, 190);
+        pedBox->setBounds (648, 108, 528, 190);
         pedBox->extraPaint = [this] (juce::Graphics& g, juce::Rectangle<int>)
         {
             g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
             const char* d[] = { "Sin pedal", "Preamp valvular con mezcla Blend", "Distorsi\xc3\xb3n en paralelo: graves intactos" };
             g.drawText (juce::String::fromUTF8 (d[pedalIdx]), 330, 40, 190, 28, juce::Justification::centredLeft);
+            if (skin >= 4) g.drawText (juce::String::fromUTF8 ("Pedal: solo en el amp sucio"), 330, 62, 190, 12, juce::Justification::centredLeft);
         };
         addAndMakeVisible (*pedBox);
         pedStrip = std::make_unique<ChoiceStrip> (p.apvts, "pedal", juce::StringArray { "Off", "SansAmp", "Darkglass" },
@@ -505,7 +523,7 @@ public:
 
         // --- Controles del amp (se acomodan segun el head)
         {
-            const char* id[] = { "gain", "bass", "mid", "himid", "treble", "contour", "ulo", "uhi", "freq", "master" };
+            const char* id[] = { "gain", "bass", "mid", "himid", "treble", "contour", "ulo", "uhi", "freq", "dirty", "master" };
             for (auto* pid : id)
                 ampKnobs[pid] = addKnob (*this, pid, pid, 0, 0, 100, 64, true, juce::Colours::white,
                                          juce::String (pid) == "master" ? fmtDb : (juce::String (pid) == "freq" ? fmtFreq : fmt1));
@@ -647,7 +665,7 @@ public:
 
     void applySkin (int s)
     {
-        skin = juce::jlimit (0, 3, s);
+        skin = juce::jlimit (0, 5, s);
         laf.skin = skin;
         const auto& sk = skinFor (skin);
         for (auto& kv : ampKnobs) kv.second->setColours (sk.label, sk.value);
@@ -692,6 +710,8 @@ public:
             g.setColour (juce::Colour (0xff868c96));
             g.setFont (fnt (10.5f, juce::Font::bold));
             g.drawText ("BASS AMP SIM  -  VST3", 28, 36, 150, 14, juce::Justification::centredLeft);
+            drawMeter (g, "IN", 442, 11, 300, 11, inDb, holdIn);
+            drawMeter (g, "OUT", 442, 30, 300, 11, outDb, holdOut);
             g.drawText ("ESCALA", 862, 16, 70, 30, juce::Justification::centredRight);
         }
 
@@ -743,8 +763,8 @@ public:
     }
 
 private:
-    static constexpr int ampY = 274;
-    static constexpr int modW = 420, delayW = 360, reverbW = 342, rowY = 582, rowX0 = 24, rowX1 = 1170, gapPx = 12;
+    static constexpr int ampY = 310;
+    static constexpr int modW = 420, delayW = 360, reverbW = 342, rowY = 618, rowX0 = 24, rowX1 = 1170, gapPx = 12;
     static constexpr int perms[6][3] = { {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0} };
 
     int widthOf (int id) const { return id == 0 ? modW : (id == 1 ? delayW : reverbW); }
@@ -767,6 +787,14 @@ private:
                 return { { "gain", "GAIN", 0, 82, 0 }, { "ulo", "ULTRA LO", 1, 246, 0 }, { "uhi", "ULTRA HI", 1, 246, 46 },
                          { "bass", "BASS", 0, 410, 0 }, { "mid", "MID", 0, 574, 0 }, { "freq", "FREQ", 0, 738, 0 },
                          { "treble", "TREBLE", 0, 902, 0 }, { "master", "MASTER", 0, 1066, 0 } };
+            case 4:   // Canciller: dos GK en paralelo
+                return { { "gain", "GAIN", 0, 64, 0 }, { "bass", "BASS", 0, 192, 0 }, { "mid", "LO MID", 0, 320, 0 }, { "himid", "HI MID", 0, 448, 0 },
+                         { "treble", "TREBLE", 0, 576, 0 }, { "contour", "CONTOUR", 0, 704, 0 }, { "dirty", "DIRTY MIX", 0, 832, 0 },
+                         { "master", "MASTER", 0, 960, 0 }, { "boost", "BOOST", 1, 1088, 20 } };
+            case 5:   // TimmyC: SVT limpio + SVT sucio
+                return { { "gain", "GAIN", 0, 72, 0 }, { "ulo", "ULTRA LO", 1, 216, 0 }, { "uhi", "ULTRA HI", 1, 216, 46 },
+                         { "bass", "BASS", 0, 360, 0 }, { "mid", "MID", 0, 504, 0 }, { "freq", "FREQ", 0, 648, 0 },
+                         { "treble", "TREBLE", 0, 792, 0 }, { "dirty", "DIRTY MIX", 0, 936, 0 }, { "master", "MASTER", 0, 1080, 0 } };
             default:  // Ryandemar
                 return { { "gain", "GAIN", 0, 72, 0 }, { "ulo", "ULTRA LO", 0, 216, 0 }, { "bass", "BASS", 0, 360, 0 }, { "treble", "TREBLE", 0, 504, 0 },
                          { "mid", "MID", 0, 648, 0 }, { "freq", "FREQ", 0, 792, 0 }, { "uhi", "ULTRA HI", 0, 936, 0 }, { "master", "MASTER", 0, 1080, 0 } };
@@ -892,12 +920,12 @@ private:
     void showPresetMenu()
     {
         juce::PopupMenu m;
-        const char* groups[] = { "", "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar", "Especiales" };
+        const char* groups[] = { "", "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar", "Canciller", "TimmyC", "Especiales" };
         for (int i = 0; i < jah::presetCount(); ++i)
         {
-            if (i == 0 || i == 1 || i == 4 || i == 7 || i == 10 || i == 13)
+            if (i == 0 || i == 1 || i == 4 || i == 7 || i == 10 || i == 13 || i == 16 || i == 19)
             {
-                const int g = i == 0 ? 0 : (i == 13 ? 5 : (i + 2) / 3);
+                const int g = i == 0 ? 0 : (i >= 19 ? 7 : (i + 2) / 3);
                 if (i > 0) m.addSeparator();
                 if (g > 0) m.addSectionHeader (groups[g]);
             }
@@ -910,6 +938,37 @@ private:
     {
         const int cur = proc.getCurrentProgram();
         if (cur != lastPreset) { lastPreset = cur; presetBtn.setButtonText (jah::presetName (cur)); }
+
+        auto toDb = [] (float lin) { return lin > 1e-5f ? 20.0f * std::log10 (lin) : -90.0f; };
+        inDb = toDb (proc.meterIn.load()); outDb = toDb (proc.meterOut.load());
+        holdIn = std::max (inDb, holdIn - 0.6f); holdOut = std::max (outDb, holdOut - 0.6f);
+        const float g = proc.meterGr.load();
+        if (std::abs (g - grDb) > 0.05f) { grDb = g; dynBox->repaint (440, 30, 170, 30); }
+        repaint (meterArea);
+    }
+
+    // Medidor de pico en segmentos: verde, amarillo (desde -18 dB) y rojo (desde -6 dB), con marca de pico
+    void drawMeter (juce::Graphics& g, const juce::String& label, int x, int y, int w, int h, float db, float hold)
+    {
+        g.setColour (juce::Colour (0xff868c96));
+        g.setFont (fnt (10.5f, juce::Font::bold));
+        g.drawText (label, x - 34, y - 2, 30, h + 4, juce::Justification::centredRight);
+        const int n = 48;
+        const float sw = (float) w / (float) n;
+        for (int i = 0; i < n; ++i)
+        {
+            const float segDb = -60.0f + 60.0f * (float) i / (float) (n - 1);
+            const juce::Colour c = segDb < -18.0f ? juce::Colour (0xff3fd27a) : (segDb < -6.0f ? juce::Colour (0xfff0c040) : juce::Colour (0xfff04848));
+            const bool on = segDb <= db;
+            g.setColour (on ? c : c.withAlpha (0.13f));
+            g.fillRoundedRectangle ((float) x + (float) i * sw, (float) y, sw - 1.5f, (float) h, 1.5f);
+        }
+        const float hx = (float) x + juce::jlimit (0.0f, 1.0f, (hold + 60.0f) / 60.0f) * (float) (w - 2);
+        g.setColour (juce::Colours::white.withAlpha (0.85f));
+        g.fillRect (hx, (float) y - 1.0f, 2.0f, (float) h + 2.0f);
+        g.setColour (db > -0.5f ? juce::Colour (0xfff04848) : juce::Colour (0xff868c96));
+        g.setFont (fnt (10.0f));
+        g.drawText (db <= -89.0f ? juce::String ("-inf") : juce::String (db, 1) + " dB", x + w + 6, y - 2, 56, h + 4, juce::Justification::centredLeft);
     }
 
     void tap()
@@ -943,9 +1002,11 @@ private:
     JAHeadLookAndFeel& laf;
     std::function<void (float)> setScale;
     int skin = 0, pedalIdx = 0, lastPreset = 0, dragId = -1, dragOffset = 0;
+    float inDb = -90.0f, outDb = -90.0f, holdIn = -90.0f, holdOut = -90.0f, grDb = 0.0f;
+    const juce::Rectangle<int> meterArea { 396, 4, 440, 46 };
     int order[3] = { 0, 1, 2 };
     bool initialised = false;
-    juce::Image heads[4];
+    juce::Image heads[6];
     std::unique_ptr<ChoiceStrip> headStrip, pedStrip, compStrip, modStrip;
     std::unique_ptr<ModuleBox> dynBox, pedBox, modBox, delayBox, reverbBox;
     ModuleBox* byId[3] = { nullptr, nullptr, nullptr };
@@ -975,7 +1036,7 @@ JustAnAmpEditor::JustAnAmpEditor (JustAnAmpProcessor& p) : AudioProcessorEditor 
     content->setLookAndFeel (&laf);
     addAndMakeVisible (*content);
 
-    setResizeLimits (600, 405, 1800, 1215);
+    setResizeLimits (600, 423, 1800, 1269);
     setResizable (true, true);
     getConstrainer()->setFixedAspectRatio ((double) designW / (double) designH);
 

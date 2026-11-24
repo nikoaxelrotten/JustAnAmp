@@ -10,7 +10,7 @@ struct Preset { const char* name; std::vector<PV> v; };
 
 inline const std::vector<Preset>& presets()
 {
-    // head: 0 Pulga, 1 NotFieldy, 2 RoAguMiSSTruVe, 3 Ryandemar | pedal: 0 Off, 1 SansAmp, 2 Darkglass
+    // head: 0 Pulga, 1 NotFieldy, 2 RoAguMiSSTruVe, 3 Ryandemar, 4 Canciller, 5 TimmyC | pedal: 0 Off, 1 SansAmp, 2 Darkglass
     // ctype: 0 Off, 1 Opto, 2 FET | mod: 1 Chorus, 2 Flanger, 3 Phaser, 4 Octaver, 5 Env Filter
     static const std::vector<Preset> p = {
         { "Init", {} },
@@ -30,6 +30,14 @@ inline const std::vector<Preset>& presets()
         { "Ryandemar - Modern Metal",   { {"head",3},{"pedal",2},{"pdrive",5},{"pblend",5},{"pbass",5},{"ptreble",6},{"pextra",6},{"gain",7},{"ulo",4},{"bass",5.5f},{"treble",6},{"mid",4.5f},{"freq",2},{"uhi",5},{"master",-7},{"ctype",2},{"cthr",-20},{"cratio",8},{"catk",4},{"crel",130},{"cgain",4},{"gthr",-48} } },
         { "Ryandemar - Clean Fingers",  { {"head",3},{"gain",3.5f},{"ulo",2},{"bass",5.5f},{"treble",5},{"mid",5},{"freq",1},{"uhi",3},{"master",-4},{"ctype",1},{"cthr",-22},{"cblend",80},{"cgain",3},{"rmix",10} } },
         { "Ryandemar - Octave Fuzz",    { {"head",3},{"pedal",1},{"pdrive",7},{"pblend",6},{"pbass",5},{"ptreble",5},{"pextra",5},{"gain",5.5f},{"bass",6},{"mid",5},{"freq",1},{"treble",5},{"master",-7},{"mod",4},{"mrate",6},{"mdepth",3},{"mshape",3},{"mmix",60} } },
+
+        { "Canciller - Dual Rig",   { {"head",4},{"pedal",2},{"pdrive",4},{"pblend",5},{"pbass",5},{"ptreble",6},{"pextra",5},{"gain",6},{"bass",5.5f},{"mid",4.5f},{"himid",6.5f},{"treble",5.5f},{"contour",4},{"dirty",4.5f},{"master",-6},{"ctype",1},{"cthr",-22},{"cblend",85},{"cgain",3},{"mod",2},{"mrate",2},{"mdepth",4},{"mmix",20},{"dmix",15},{"dtime",375} } },
+        { "Canciller - Clean Rig",  { {"head",4},{"gain",4},{"bass",5.5f},{"mid",5},{"himid",6},{"treble",5.5f},{"contour",3},{"dirty",0},{"master",-5},{"ctype",1},{"cthr",-22},{"cblend",80},{"cgain",3} } },
+        { "Canciller - Gnarly",     { {"head",4},{"pedal",2},{"pdrive",6},{"pblend",6},{"pbass",5},{"ptreble",6},{"pextra",6},{"gain",7.5f},{"bass",5.5f},{"mid",4},{"himid",6},{"treble",6},{"contour",7},{"dirty",9},{"master",-7},{"ctype",2},{"cthr",-20},{"cratio",6},{"catk",4},{"crel",140},{"cgain",3},{"gthr",-48} } },
+
+        { "TimmyC - Rage Dual",       { {"head",5},{"pedal",2},{"pdrive",4},{"pblend",5},{"pbass",5},{"ptreble",6},{"pextra",5},{"gain",5.5f},{"bass",6},{"mid",5},{"freq",1},{"treble",5},{"ulo",10},{"dirty",5},{"master",-6},{"ctype",2},{"cthr",-20},{"cratio",6},{"catk",5},{"crel",150},{"cgain",3} } },
+        { "TimmyC - Clean SVT",      { {"head",5},{"gain",4},{"bass",6},{"mid",5},{"freq",1},{"treble",5},{"dirty",0},{"master",-5},{"ctype",1},{"cthr",-22},{"cblend",85},{"cgain",3} } },
+        { "TimmyC - Full Distortion",{ {"head",5},{"pedal",1},{"pdrive",5},{"pblend",5},{"pbass",5},{"ptreble",5},{"pextra",5},{"gain",8},{"bass",6.5f},{"mid",4},{"freq",2},{"treble",6},{"ulo",8},{"uhi",6},{"dirty",10},{"master",-8},{"ctype",2},{"cthr",-18},{"cratio",8},{"catk",4},{"crel",130},{"cgain",4},{"gthr",-48} } },
 
         { "Especial - Octave Sub",      { {"head",2},{"gain",4},{"bass",6},{"mid",4},{"freq",0},{"treble",4},{"master",-6},{"mod",4},{"mrate",7},{"mdepth",4},{"mshape",3},{"mmix",55},{"ctype",1},{"cthr",-22},{"cblend",80},{"cgain",3} } },
         { "Especial - Envelope Funk",   { {"head",0},{"gain",4},{"bass",5.5f},{"mid",5},{"himid",6},{"treble",6},{"master",-6},{"mod",5},{"mrate",5},{"mdepth",6},{"mshape",5},{"mmix",85},{"ctype",2},{"cthr",-20},{"cratio",6},{"catk",5},{"crel",150},{"cgain",3} } },

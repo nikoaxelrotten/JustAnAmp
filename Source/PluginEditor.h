@@ -4,7 +4,7 @@
 namespace jahead
 {
     constexpr int designW = 1200;
-    constexpr int designH = 810;
+    constexpr int designH = 846;
 
     // Un "skin" por head: color de acento, carácter del panel de controles y de las perillas.
     struct Skin

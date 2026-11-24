@@ -93,10 +93,11 @@ struct TubeStage
 //==============================================================================
 struct Params
 {
-    int head = 0, pedal = 0;                   // head: 0 Pulga, 1 NotFieldy, 2 RoAguMiSSTruVe, 3 Ryandemar | pedal: 0 Off, 1 SansAmp, 2 Darkglass
+    int head = 0, pedal = 0;                   // head: 0 Pulga, 1 NotFieldy, 2 RoAguMiSSTruVe, 3 Ryandemar, 4 Canciller (doble GK), 5 TimmyC (doble SVT) | pedal: 0 Off, 1 SansAmp, 2 Darkglass
     float gain = 5, bass = 5, mid = 5, himid = 5, treble = 5, contour = 0, ulo = 0, uhi = 0, freq = 2, masterDb = 0;
     float eq[7] = { 0, 0, 0, 0, 0, 0, 0 };    // ecualizador grafico (dB)
     bool bright = false, boost = false;
+    float dirty = 4;                           // mezcla limpio/sucio de los heads dobles (4 y 5)
     float pdrive = 4, pblend = 5, plevelDb = 0, pbass = 5, ptreble = 5, pextra = 5;
 };
 
@@ -114,7 +115,7 @@ struct HeadVoice
     double levelComp[5];            // compensacion de nivel segun Gain (dB)
 };
 
-inline const HeadVoice& voiceFor (int h)
+inline const HeadVoice& voiceFor (int h, bool dirty = false)
 {
     static const HeadVoice v[4] = {
         // Pulga: estado solido, rapido y brillante, sin sag
@@ -130,7 +131,20 @@ inline const HeadVoice& voiceFor (int h)
         { "Ryandemar", 2, -2.0, 28.0, { 1.5, 1.3, 1.0 }, { 2.0, 2.4, 2.0 }, { 0.20, 0.12, 0.0 }, { 30, 40, 40 }, { 10000, 9000, 8000 }, { 0.55, 0.45, 0.0 },
           30.0, 1.2, 3.2, 0.18, 9000.0, 0.0, { 2.2, -0.1, -3.2, -5.2, -6.0 } }
     };
-    return v[h < 0 ? 0 : (h > 3 ? 3 : h)];
+    // Heads dobles. Canciller: dos GK en paralelo, uno limpio y otro "sucio" (los pedales entran solo al sucio).
+    // TimmyC: SVT limpio + SVT empujado hasta la distorsion (el pedal tambien entra solo al sucio).
+    static const HeadVoice dual[4] = {
+        { "Canciller limpio", 2, -4.0, 8.0, { 1.0, 1.0, 1.0 }, { 3.2, 3.0, 2.0 }, { 0.05, 0.04, 0.0 }, { 30, 40, 40 }, { 16000, 14000, 12000 }, { 0.6, 0.4, 0.0 },
+          30.0, 1.0, 4.0, 0.0, 11000.0, 6.4, { 0, 0, 0, 0, 0 } },
+        { "Canciller sucio", 2, 4.0, 30.0, { 1.2, 1.2, 1.0 }, { 3.4, 3.4, 2.0 }, { 0.08, 0.06, 0.0 }, { 30, 40, 40 }, { 14000, 12000, 10000 }, { 0.6, 0.4, 0.0 },
+          30.0, 1.2, 4.0, 0.05, 11000.0, 0.0, { -0.6, -2.5, -4.8, -6.1, -6.7 } },
+        { "TimmyC limpio", 2, 0.0, 10.0, { 1.5, 1.3, 1.0 }, { 2.0, 2.0, 2.0 }, { 0.22, 0.18, 0.0 }, { 25, 30, 40 }, { 9000, 7500, 7500 }, { 0.55, 0.45, 0.0 },
+          25.0, 1.7, 2.2, 0.7, 7500.0, -2.3, { 0, 0, 0, 0, 0 } },
+        { "TimmyC sucio", 3, 6.0, 34.0, { 1.5, 1.4, 1.2 }, { 2.2, 2.6, 3.2 }, { 0.22, 0.18, 0.12 }, { 30, 40, 50 }, { 9000, 7500, 6500 }, { 0.45, 0.35, 0.20 },
+          25.0, 2.2, 3.0, 0.5, 7500.0, 0.0, { -3.9, -4.8, -5.8, -6.6, -6.8 } }
+    };
+    if (h >= 4) return dual[((h > 5 ? 5 : h) - 4) * 2 + (dirty ? 1 : 0)];
+    return v[h < 0 ? 0 : h];
 }
 
 //==============================================================================
@@ -214,6 +228,127 @@ struct BassPedal
 };
 
 //==============================================================================
+// Una cadena de amp: preamp (1 a 3 etapas) -> tono -> potencia con sag. Corre sobremuestreada.
+struct AmpChain
+{
+    HeadVoice vo = voiceFor (0);
+    TubeStage stage[3];
+    OnePole inHP, dcHP;
+    Biquad bassS, loMid, hiMid, trebS, cLow, cMid, cHigh, bLow, bHigh, brightS, uLoS, uLoD, uHiS, eqB[7];
+    double env = 0, sagAtk = 0.01, sagRel = 0.0001, trimLin = 1.0;
+
+    void reset()
+    {
+        for (auto& st : stage) st.reset();
+        inHP.reset(); dcHP.reset();
+        for (auto* b : { &bassS, &loMid, &hiMid, &trebS, &cLow, &cMid, &cHigh, &bLow, &bHigh, &brightS, &uLoS, &uLoD, &uHiS }) b->reset();
+        for (auto& b : eqB) b.reset();
+        env = 0.0;
+    }
+
+    // layout de tono: 0 estilo GK, 1 estilo Mesa + grafico, 2 estilo SVT, 3 SVT moderno. gnarly: voz "sucia" del head doble.
+    void update (const Params& sm, const HeadVoice& v, int layout, bool gnarly, double g, double fsOs)
+    {
+        vo = v;
+        const double t = std::pow (g, 1.4);
+        const double gainDb = vo.gainMinDb + (vo.gainMaxDb - vo.gainMinDb) * t;
+        for (int s = 0; s < vo.nStages; ++s)
+            stage[s].setup (vo.base[s] * dbToLin (vo.w[s] * gainDb), vo.k[s], vo.bias[s], vo.coupHP[s], vo.millerLP[s], fsOs);
+        inHP.set (vo.inHP, fsOs);
+
+        auto peak0 = [fsOs] (Biquad& b, double f) { b.setPeak (f, 1.0, 0.0, fsOs); };
+        auto lsh0 = [fsOs] (Biquad& b) { b.setLowShelf (100.0, 0.0, fsOs); };
+        auto hsh0 = [fsOs] (Biquad& b) { b.setHighShelf (4000.0, 0.0, fsOs); };
+        lsh0 (bassS); peak0 (loMid, 500); peak0 (hiMid, 1300); hsh0 (trebS); lsh0 (cLow); peak0 (cMid, 480); hsh0 (cHigh);
+        lsh0 (bLow); hsh0 (bHigh); hsh0 (brightS); lsh0 (uLoS); peak0 (uLoD, 550); hsh0 (uHiS);
+        static const double eqF[7] = { 45, 110, 280, 700, 1600, 3600, 8000 };
+        for (int b = 0; b < 7; ++b) peak0 (eqB[b], eqF[b]);
+
+        static const double midF[5] = { 220, 450, 800, 1600, 3000 };
+        const int fi = (int) clampd (std::round (sm.freq), 0.0, 4.0);
+        const double ul = clampd (sm.ulo / 10.0, 0.0, 1.0), uh = clampd (sm.uhi / 10.0, 0.0, 1.0);
+        switch (layout)
+        {
+            case 0:   // bass / lo mid / hi mid / treble + contour + boost
+            {
+                const double c = clampd (sm.contour / 10.0, 0.0, 1.0);
+                bassS.setLowShelf (55.0, (sm.bass - 5.0) * 3.0, fsOs);
+                loMid.setPeak (250.0, 0.9, (sm.mid - 5.0) * 2.4, fsOs);
+                hiMid.setPeak (1300.0, 0.9, (sm.himid - 5.0) * 2.4, fsOs);
+                trebS.setHighShelf (3800.0, (sm.treble - 5.0) * 2.8, fsOs);
+                cMid.setPeak (480.0, 0.7, -11.0 * c - (gnarly ? 5.0 : 0.0), fsOs);
+                cLow.setLowShelf (70.0, 5.0 * c, fsOs);
+                cHigh.setHighShelf (gnarly ? 2500.0 : 4500.0, (gnarly ? 3.0 : 0.0) + 6.0 * c, fsOs);
+                if (sm.boost) { bLow.setLowShelf (90.0, 4.5, fsOs); bHigh.setHighShelf (5000.0, 5.0, fsOs); }
+                break;
+            }
+            case 1:   // bass / mid / treble + bright + grafico de 7 bandas
+            {
+                bassS.setLowShelf (70.0, (sm.bass - 5.0) * 2.8, fsOs);
+                loMid.setPeak (700.0, 0.8, (sm.mid - 5.0) * 2.0, fsOs);
+                trebS.setHighShelf (3500.0, (sm.treble - 5.0) * 2.8, fsOs);
+                if (sm.bright) brightS.setHighShelf (3000.0, 6.0, fsOs);
+                for (int b = 0; b < 7; ++b) eqB[b].setPeak (eqF[b], 1.4, clampd (sm.eq[b], -12.0, 12.0), fsOs);
+                break;
+            }
+            case 2:   // bass / mid + frecuencia / treble + ultra lo / ultra hi
+            {
+                bassS.setLowShelf (50.0, (sm.bass - 5.0) * 3.0, fsOs);
+                loMid.setPeak (midF[fi], 0.75, (sm.mid - 5.0) * 2.4, fsOs);
+                trebS.setHighShelf (3200.0, (sm.treble - 5.0) * 2.0, fsOs);
+                uLoS.setLowShelf (45.0, 7.0 * ul, fsOs);
+                uLoD.setPeak (550.0, 0.8, -5.0 * ul, fsOs);
+                uHiS.setHighShelf (7500.0, 8.0 * uh, fsOs);
+                break;
+            }
+            default:  // igual que el anterior, con Ultra Lo / Ultra Hi continuos y mas rango
+            {
+                bassS.setLowShelf (55.0, (sm.bass - 5.0) * 3.0, fsOs);
+                loMid.setPeak (midF[fi], 0.8, (sm.mid - 5.0) * 2.4, fsOs);
+                trebS.setHighShelf (3000.0, (sm.treble - 5.0) * 2.4, fsOs);
+                uLoS.setLowShelf (40.0, 8.0 * ul, fsOs);
+                uLoD.setPeak (550.0, 0.8, -4.0 * ul, fsOs);
+                uHiS.setHighShelf (8000.0, 10.0 * uh, fsOs);
+                break;
+            }
+        }
+        sagAtk = 1.0 - std::exp (-1.0 / (fsOs * 0.004));
+        sagRel = 1.0 - std::exp (-1.0 / (fsOs * 0.15));
+        dcHP.set (20.0, fsOs);
+        trimLin = dbToLin (vo.trimDb + interpTable (vo.levelComp, 5, g));
+    }
+
+    double tone (double v)
+    {
+        v = brightS.process (v);
+        v = bassS.process (v);
+        v = loMid.process (v);
+        v = hiMid.process (v);
+        v = trebS.process (v);
+        v = cMid.process (v); v = cLow.process (v); v = cHigh.process (v);
+        v = bLow.process (v); v = bHigh.process (v);
+        v = uLoS.process (v); v = uLoD.process (v); v = uHiS.process (v);
+        for (auto& b : eqB) v = b.process (v);
+        return v;
+    }
+
+    double process (double x)
+    {
+        double v = inHP.hp (x);
+        for (int s = 0; s < vo.nStages; ++s)
+        {
+            v = stage[s].process (v);
+            if (s == 0) v = tone (v);
+        }
+        const double a = std::abs (v);
+        env += (a > env ? sagAtk : sagRel) * (a - env);
+        v /= 1.0 + vo.sag * env;
+        v = shape (v * vo.pwrDrive, vo.pwrK);
+        return dcHP.hp (v) * trimLin;
+    }
+};
+
+//==============================================================================
 class Engine
 {
 public:
@@ -253,7 +388,7 @@ public:
             const double a = 1.0 - std::exp (-(double) m / (fs * 0.02));
             auto sg = [a] (float& cur, float t) { cur += (t - cur) * (float) a; };
             sg (sm.gain, tgt.gain); sg (sm.bass, tgt.bass); sg (sm.mid, tgt.mid); sg (sm.himid, tgt.himid); sg (sm.treble, tgt.treble);
-            sg (sm.contour, tgt.contour); sg (sm.ulo, tgt.ulo); sg (sm.uhi, tgt.uhi); sg (sm.freq, tgt.freq);
+            sg (sm.contour, tgt.contour); sg (sm.ulo, tgt.ulo); sg (sm.uhi, tgt.uhi); sg (sm.freq, tgt.freq); sg (sm.dirty, tgt.dirty);
             for (int b = 0; b < 7; ++b) sg (sm.eq[b], tgt.eq[b]);
             sg (sm.pdrive, tgt.pdrive); sg (sm.pblend, tgt.pblend); sg (sm.plevelDb, tgt.plevelDb);
             sg (sm.pbass, tgt.pbass); sg (sm.ptreble, tgt.ptreble); sg (sm.pextra, tgt.pextra);
@@ -276,7 +411,7 @@ public:
 
             for (int i = 0; i < m; ++i)
             {
-                double v = outLP2.lp (outLP1.lp ((double) x[pos + i])) * trimLin;
+                double v = outLP2.lp (outLP1.lp ((double) x[pos + i]));
                 if (fadeLeft > 0)
                 {
                     v *= 1.0 - (double) fadeLeft / kFade;
@@ -288,142 +423,54 @@ public:
         }
     }
 
-    HeadVoice vo = voiceFor (0);
-    BassPedal pedal;
-
 private:
     static constexpr int kFade = 480;
 
     void resetStates()
     {
-        for (auto& s : stage) s.reset();
-        inHP.reset(); dcHP.reset(); outLP1.reset(); outLP2.reset();
-        for (auto* b : { &bassS, &loMid, &hiMid, &trebS, &cLow, &cMid, &cHigh, &bLow, &bHigh, &brightS, &uLoS, &uLoD, &uHiS }) b->reset();
-        for (auto& b : eqB) b.reset();
+        chainA.reset(); chainB.reset();
+        outLP1.reset(); outLP2.reset();
         pedal.reset();
-        env = 0.0;
         fadeLeft = started ? kFade : 0;
     }
 
     void updateCoeffs()
     {
-        vo = voiceFor (sm.head);
+        const int head = sm.head;
+        dual = head >= 4;
+        const int layout = head == 4 ? 0 : (head == 5 ? 2 : head);
         const double g = clampd (sm.gain / 10.0, 0.0, 1.0);
-        const double t = std::pow (g, 1.4);
-        const double gainDb = vo.gainMinDb + (vo.gainMaxDb - vo.gainMinDb) * t;
-        for (int s = 0; s < vo.nStages; ++s)
-            stage[s].setup (vo.base[s] * dbToLin (vo.w[s] * gainDb), vo.k[s], vo.bias[s], vo.coupHP[s], vo.millerLP[s], fsOs);
-        inHP.set (vo.inHP, fsOs);
-
-        // Tone: todos los filtros existen en todos los heads; los que no aplican quedan en 0 dB.
-        auto peak0 = [this] (Biquad& b, double f) { b.setPeak (f, 1.0, 0.0, fsOs); };
-        auto lsh0 = [this] (Biquad& b) { b.setLowShelf (100.0, 0.0, fsOs); };
-        auto hsh0 = [this] (Biquad& b) { b.setHighShelf (4000.0, 0.0, fsOs); };
-        lsh0 (bassS); peak0 (loMid, 500); peak0 (hiMid, 1300); hsh0 (trebS); lsh0 (cLow); peak0 (cMid, 480); hsh0 (cHigh);
-        lsh0 (bLow); hsh0 (bHigh); hsh0 (brightS); lsh0 (uLoS); peak0 (uLoD, 550); hsh0 (uHiS);
-        static const double eqF[7] = { 45, 110, 280, 700, 1600, 3600, 8000 };
-        for (int b = 0; b < 7; ++b) peak0 (eqB[b], eqF[b]);
-
-        static const double midF[5] = { 220, 450, 800, 1600, 3000 };
-        const int fi = (int) clampd (std::round (sm.freq), 0.0, 4.0);
-        const double ul = clampd (sm.ulo / 10.0, 0.0, 1.0), uh = clampd (sm.uhi / 10.0, 0.0, 1.0);
-        switch (sm.head)
+        if (! dual)
+            chainA.update (sm, voiceFor (head, false), layout, false, g, fsOs);
+        else
         {
-            case 0:   // Pulga: bass / lo mid / hi mid / treble + contour + boost
-            {
-                const double c = clampd (sm.contour / 10.0, 0.0, 1.0);
-                bassS.setLowShelf (55.0, (sm.bass - 5.0) * 3.0, fsOs);
-                loMid.setPeak (250.0, 0.9, (sm.mid - 5.0) * 2.4, fsOs);
-                hiMid.setPeak (1300.0, 0.9, (sm.himid - 5.0) * 2.4, fsOs);
-                trebS.setHighShelf (3800.0, (sm.treble - 5.0) * 2.8, fsOs);
-                cMid.setPeak (480.0, 0.7, -11.0 * c, fsOs);
-                cLow.setLowShelf (70.0, 5.0 * c, fsOs);
-                cHigh.setHighShelf (4500.0, 6.0 * c, fsOs);
-                if (sm.boost) { bLow.setLowShelf (90.0, 4.5, fsOs); bHigh.setHighShelf (5000.0, 5.0, fsOs); }
-                break;
-            }
-            case 1:   // NotFieldy: bass / mid / treble + bright + grafico de 7 bandas
-            {
-                bassS.setLowShelf (70.0, (sm.bass - 5.0) * 2.8, fsOs);
-                loMid.setPeak (700.0, 0.8, (sm.mid - 5.0) * 2.0, fsOs);
-                trebS.setHighShelf (3500.0, (sm.treble - 5.0) * 2.8, fsOs);
-                if (sm.bright) brightS.setHighShelf (3000.0, 6.0, fsOs);
-                for (int b = 0; b < 7; ++b) eqB[b].setPeak (eqF[b], 1.4, clampd (sm.eq[b], -12.0, 12.0), fsOs);
-                break;
-            }
-            case 2:   // RoAguMiSSTruVe: bass / mid + frecuencia / treble + ultra lo / ultra hi
-            {
-                bassS.setLowShelf (50.0, (sm.bass - 5.0) * 3.0, fsOs);
-                loMid.setPeak (midF[fi], 0.75, (sm.mid - 5.0) * 2.4, fsOs);
-                trebS.setHighShelf (3200.0, (sm.treble - 5.0) * 2.0, fsOs);
-                uLoS.setLowShelf (45.0, 7.0 * ul, fsOs);
-                uLoD.setPeak (550.0, 0.8, -5.0 * ul, fsOs);
-                uHiS.setHighShelf (7500.0, 8.0 * uh, fsOs);
-                break;
-            }
-            default:  // Ryandemar: igual que el anterior, con Ultra Lo / Ultra Hi continuos y mas rango
-            {
-                bassS.setLowShelf (55.0, (sm.bass - 5.0) * 3.0, fsOs);
-                loMid.setPeak (midF[fi], 0.8, (sm.mid - 5.0) * 2.4, fsOs);
-                trebS.setHighShelf (3000.0, (sm.treble - 5.0) * 2.4, fsOs);
-                uLoS.setLowShelf (40.0, 8.0 * ul, fsOs);
-                uLoD.setPeak (550.0, 0.8, -4.0 * ul, fsOs);
-                uHiS.setHighShelf (8000.0, 10.0 * uh, fsOs);
-                break;
-            }
+            chainA.update (sm, voiceFor (head, false), layout, false, 0.5, fsOs);    // lado limpio: ganancia fija
+            chainB.update (sm, voiceFor (head, true), layout, true, g, fsOs);         // lado sucio: responde al Gain
         }
-        sagAtk = 1.0 - std::exp (-1.0 / (fsOs * 0.004));
-        sagRel = 1.0 - std::exp (-1.0 / (fsOs * 0.15));
-        dcHP.set (20.0, fsOs);
-
-        Params pp = sm;
-        pedal.setup (sm.pedal, pp, fsOs);
-
-        outLP1.set (vo.outLP, fs);
-        outLP2.set (vo.outLP, fs);
-        trimLin = dbToLin (vo.trimDb + interpTable (vo.levelComp, 5, g));
-    }
-
-    double tone (double v)
-    {
-        v = brightS.process (v);
-        v = bassS.process (v);
-        v = loMid.process (v);
-        v = hiMid.process (v);
-        v = trebS.process (v);
-        v = cMid.process (v); v = cLow.process (v); v = cHigh.process (v);
-        v = bLow.process (v); v = bHigh.process (v);
-        v = uLoS.process (v); v = uLoD.process (v); v = uHiS.process (v);
-        for (auto& b : eqB) v = b.process (v);
-        return v;
+        dirtyAmt = dual ? clampd (sm.dirty / 10.0, 0.0, 1.0) : 0.0;
+        pedal.setup (sm.pedal, sm, fsOs);
+        outLP1.set (chainA.vo.outLP, fs);
+        outLP2.set (chainA.vo.outLP, fs);
     }
 
     double processSample (double x)
     {
-        double v = x;
-        if (sm.pedal != 0) v = pedal.process (v);
-        v = inHP.hp (v);
-        for (int s = 0; s < vo.nStages; ++s)
-        {
-            v = stage[s].process (v);
-            if (s == 0) v = tone (v);
-        }
-        const double a = std::abs (v);
-        env += (a > env ? sagAtk : sagRel) * (a - env);
-        v /= 1.0 + vo.sag * env;
-        v = shape (v * vo.pwrDrive, vo.pwrK);
-        return dcHP.hp (v);
+        const double xp = sm.pedal != 0 ? pedal.process (x) : x;
+        if (! dual) return chainA.process (xp);
+        const double a = chainA.process (x);            // limpio: sin pedal
+        const double b = chainB.process (xp);           // sucio: recibe los pedales
+        return a * (1.0 - dirtyAmt) + b * dirtyAmt;
     }
 
     double fs = 48000.0, fsOs = 192000.0;
     juce::dsp::Oversampling<float> os { 1, 2, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false };
     Params tgt, sm;
-    bool started = false;
+    bool started = false, dual = false;
     int curHead = -1, curPedal = -1, fadeLeft = 0;
+    double dirtyAmt = 0.0;
 
-    TubeStage stage[3];
-    OnePole inHP, dcHP, outLP1, outLP2;
-    Biquad bassS, loMid, hiMid, trebS, cLow, cMid, cHigh, bLow, bHigh, brightS, uLoS, uLoD, uHiS, eqB[7];
-    double env = 0, sagAtk = 0.01, sagRel = 0.0001, trimLin = 1.0;
+    AmpChain chainA, chainB;
+    BassPedal pedal;
+    OnePole outLP1, outLP2;
 };
 } // namespace jah

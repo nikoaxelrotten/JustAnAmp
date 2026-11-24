@@ -28,7 +28,9 @@ juce_add_binary_data(JustAnAmpAssets SOURCES
   Assets/amp_pulga.jpg
   Assets/amp_notfieldy.jpg
   Assets/amp_roagu.jpg
-  Assets/amp_ryan.jpg)
+  Assets/amp_ryan.jpg
+  Assets/amp_canciller.jpg
+  Assets/amp_timmyc.jpg)
 
 juce_add_plugin(JustAnAmp
   COMPANY_NAME "JustAnAmp"

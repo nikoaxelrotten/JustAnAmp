@@ -23,7 +23,7 @@ APVTS::ParameterLayout JustAnAmpProcessor::createParameterLayout()
     };
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "head", 1 }, "Head",
-        StringArray { "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar" }, 0));
+        StringArray { "Pulga", "NotFieldy", "RoAguMiSSTruVe", "Ryandemar", "Canciller", "TimmyC" }, 0));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "pedal", 1 }, "Pedal",
         StringArray { "Off", "SansAmp", "Darkglass" }, 0));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "ctype", 1 }, "Compressor",
@@ -36,6 +36,7 @@ APVTS::ParameterLayout JustAnAmpProcessor::createParameterLayout()
     addFloat ("himid",   "Hi Mid",   0.0f, 10.0f, 5.0f);
     addFloat ("treble",  "Treble",   0.0f, 10.0f, 5.0f);
     addFloat ("contour", "Contour",  0.0f, 10.0f, 0.0f);
+    addFloat ("dirty",   "Dirty Mix", 0.0f, 10.0f, 4.0f);
     addFloat ("ulo",     "Ultra Lo", 0.0f, 10.0f, 0.0f);
     addFloat ("uhi",     "Ultra Hi", 0.0f, 10.0f, 0.0f);
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "freq", 1 }, "Mid Frequency",
@@ -139,6 +140,7 @@ void JustAnAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     p.himid = param ("himid");
     p.treble = param ("treble");
     p.contour = param ("contour");
+    p.dirty = param ("dirty");
     p.ulo = param ("ulo");
     p.uhi = param ("uhi");
     p.freq = param ("freq");
@@ -192,8 +194,12 @@ void JustAnAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     for (int start = 0; start < total; start += chunk)
     {
         const int n = juce::jmin (chunk, total - start);
+        float inPk = 0.0f;
         for (int i = 0; i < n; ++i)
+        {
             mono[(size_t) i] = 0.5f * (l[start + i] + r[start + i]);
+            inPk = std::max (inPk, std::abs (mono[(size_t) i]));
+        }
 
         gate.process (mono.data(), n, gateThr, gateRel);
         comp.process (mono.data(), n, ctype, cthr, cratio, catk, crel, cblend, cgain);
@@ -203,12 +209,19 @@ void JustAnAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
         if (fpc.hasPpq && fsHost > 0.0) fpc.ppq += (double) start / fsHost * fp.bpm / 60.0;
         fx.process (mono.data(), l + start, r + start, n, fpc);
 
+        float outPk = 0.0f;
         for (int i = 0; i < n; ++i)
         {
             const float g = master.getNextValue();
             l[start + i] = sanitize (l[start + i] * g);
             r[start + i] = sanitize (r[start + i] * g);
+            outPk = std::max (outPk, std::max (std::abs (l[start + i]), std::abs (r[start + i])));
         }
+        // medidores: pico con caida suave
+        const float decay = (float) std::exp (-(double) n / (std::max (8000.0, fsHost) * 0.3));
+        meterIn.store (std::max (inPk, meterIn.load() * decay));
+        meterOut.store (std::max (outPk, meterOut.load() * decay));
+        meterGr.store ((float) comp.lastGainReduction());
     }
 }
 
