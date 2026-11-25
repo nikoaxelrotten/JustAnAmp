@@ -546,67 +546,51 @@ public:
             eqAtt.push_back (std::make_unique<APVTS::SliderAttachment> (p.apvts, "eq" + juce::String (i + 1), s));
         }
 
-        // --- Mod (arrastrable)
-        modBox = std::make_unique<ModuleBox> ("MOD", colMod, true);
-        modBox->setSize (modW, 210);
-        modStrip = std::make_unique<ChoiceStrip> (p.apvts, "mod", juce::StringArray { "Off", "Chorus", "Flanger", "Phaser", "Octaver", "Env Filter" },
-                                                  std::vector<juce::Colour> { colMod }, 4, 28, 6, 203, false);
-        modStrip->setBounds (18, 36, 384, 62);
-        modBox->addAndMakeVisible (*modStrip);
+        // --- Efectos: 7 modulos, cada uno con su on/off; se arrastran por el encabezado para cambiar el orden
+        struct FxKnob { const char* pid; const char* label; std::function<juce::String (double)> fmt; };
+        auto makeFx = [this] (int id, const char* title, juce::Colour col, const char* onId, std::vector<FxKnob> ks)
         {
-            const char* id[] = { "mrate", "mdepth", "mshape", "mmix" };
-            const char* nm[] = { "RATE", "DEPTH", "SHAPE", "MIX" };
-            for (int i = 0; i < 4; ++i)
-                modKnobs.push_back (addKnob (*modBox, id[i], nm[i], 10 + i * 100, 108, 90, 58, false, colMod, i == 3 ? fmtPct : fmt1));
-        }
-
-        // --- Delay (arrastrable, con bypass y TAP)
-        delayBox = std::make_unique<ModuleBox> ("DELAY", colDelay, true);
-        delayBox->setSize (delayW, 210);
-        delayBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
-        {
-            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
-            g.drawText (juce::String::fromUTF8 ("Est\xc3\xa9reo ping-pong"), 12, 74, delayW - 24, 16, juce::Justification::centred);
+            auto b = std::make_unique<ModuleBox> (title, col, true);
+            b->setSize (fxW, fxH);
+            int slot = 0;
+            for (const auto& k : ks)
+            {
+                fxKnobs[id].push_back (addKnob (*b, k.pid, k.label, 4 + (slot % 2) * 80, 42 + (slot / 2) * 78, 72, 46, false, col, k.fmt));
+                ++slot;
+            }
+            setupPower (*b, fxOn[id], onId, col, fxKnobs[id], nullptr);
+            byId[id] = b.get();
+            fxBox[id] = std::move (b);
         };
-        for (int i = 0; i < 3; ++i)
-        {
-            const char* id[] = { "dtime", "dfb", "dmix" }; const char* nm[] = { "TIME", "FEEDBACK", "MIX" };
-            delayKnobs.push_back (addKnob (*delayBox, id[i], nm[i], 20 + i * 110, 108, 90, 58, false, colDelay, i == 0 ? fmtMs : fmtPct));
-        }
+        makeFx (0, "CHORUS",     colChorus,  "chon", { { "chrate", "RATE", fmt1 }, { "chdepth", "DEPTH", fmt1 }, { "chmix", "MIX", fmtPct } });
+        makeFx (1, "FLANGER",    colFlanger, "flon", { { "flrate", "RATE", fmt1 }, { "fldepth", "DEPTH", fmt1 }, { "flfb", "FEEDBACK", fmt1 }, { "flmix", "MIX", fmtPct } });
+        makeFx (2, "PHASER",     colPhaser,  "phon", { { "phrate", "RATE", fmt1 }, { "phdepth", "DEPTH", fmt1 }, { "phfb", "FEEDBACK", fmt1 }, { "phmix", "MIX", fmtPct } });
+        makeFx (3, "OCTAVER",    colOct,     "ocon", { { "ocdown", "OCT -1", fmt1 }, { "ocup", "OCT +1", fmt1 }, { "octone", "TONE", fmt1 }, { "ocdirect", "DIRECT", fmtPct } });
+        makeFx (4, "ENV FILTER", colEnv,     "efon", { { "efsens", "SENS", fmt1 }, { "efrange", "RANGE", fmt1 }, { "efres", "RES", fmt1 }, { "efmix", "MIX", fmtPct } });
+        makeFx (5, "DELAY",      colDelay,   "don",  { { "dtime", "TIME", fmtMs }, { "dfb", "FEEDBACK", fmtPct }, { "dmix", "MIX", fmtPct } });
+        makeFx (6, "REVERB",     colReverb,  "ron",  { { "rsize", "SIZE", fmt1 }, { "rdamp", "DAMP", fmt1 }, { "rmix", "MIX", fmtPct } });
+
         tapButton.setButtonText ("TAP");
         tapButton.getProperties().set ("hint", (juce::int64) colDelay.getARGB());
-        tapButton.setBounds ((delayW - 118) / 2, 36, 118, 32);
+        tapButton.setBounds (88, 134, 66, 32);
         tapButton.onClick = [this] { tap(); };
-        delayBox->addAndMakeVisible (tapButton);
-        setupPower (*delayBox, delayOn, "don", colDelay, delayW, delayKnobs, &tapButton);
-
-        // --- Reverb (arrastrable, con bypass)
-        reverbBox = std::make_unique<ModuleBox> ("REVERB", colReverb, true);
-        reverbBox->setSize (reverbW, 210);
-        reverbBox->extraPaint = [] (juce::Graphics& g, juce::Rectangle<int>)
+        byId[5]->addAndMakeVisible (tapButton);
         {
-            g.setColour (juce::Colour (0xff6c727c)); g.setFont (fnt (11.0f));
-            g.drawText (juce::String::fromUTF8 ("Reverb FDN de 8 l\xc3\xadneas"), 12, 54, reverbW - 24, 18, juce::Justification::centred);
-        };
-        {
-            const char* id[] = { "rsize", "rdamp", "rmix" }; const char* nm[] = { "SIZE", "DAMP", "MIX" };
-            for (int i = 0; i < 3; ++i)
-                reverbKnobs.push_back (addKnob (*reverbBox, id[i], nm[i], 12 + i * 108, 108, 90, 58, false, colReverb, i == 2 ? fmtPct : fmt1));
+            auto prev = fxOn[5].onStateChange;
+            fxOn[5].onStateChange = [this, prev] { if (prev) prev(); tapButton.setEnabled (fxOn[5].getToggleState()); };
+            tapButton.setEnabled (fxOn[5].getToggleState());
         }
-        setupPower (*reverbBox, reverbOn, "ron", colReverb, reverbW, reverbKnobs, nullptr);
 
-        byId[0] = modBox.get(); byId[1] = delayBox.get(); byId[2] = reverbBox.get();
-        for (int id = 0; id < 3; ++id)
+        for (int id = 0; id < fxN; ++id)
         {
             addAndMakeVisible (*byId[id]);
             byId[id]->onDragStart = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragStart (id, b, e); };
             byId[id]->onDragMove  = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragMove (id, b, e); };
             byId[id]->onDragEnd   = [this, id] (ModuleBox& b, const juce::MouseEvent& e) { dragEnd (id, b, e); };
         }
-        orderAtt = std::make_unique<juce::ParameterAttachment> (*p.apvts.getParameter ("fxorder"), [this] (float v)
+        orderAtt = std::make_unique<juce::ParameterAttachment> (*p.apvts.getParameter ("fxorder7"), [this] (float v)
         {
-            const int o = juce::jlimit (0, 5, (int) std::round (v));
-            for (int k = 0; k < 3; ++k) order[k] = perms[o][k];
+            jah::decodeOrder ((int) std::round (v), order);
             if (dragId < 0) layoutModules (initialised, -1);
         });
         orderAtt->sendInitialUpdate();
@@ -640,18 +624,9 @@ public:
             for (size_t k = 0; k < compKnobs.size(); ++k)
                 compKnobs[k]->setActive (i != 0 && ! (k == 1 && i == 1));   // el ratio del Opto es fijo
         };
-        modStrip->onChange = [this] (int i)
-        {
-            static const char* nm[6][4] = { { "RATE", "DEPTH", "SHAPE", "MIX" }, { "RATE", "DEPTH", "SHAPE", "MIX" }, { "RATE", "DEPTH", "SHAPE", "MIX" },
-                                            { "RATE", "DEPTH", "SHAPE", "MIX" }, { "OCT 1", "OCT 2", "TONE", "DIRECT" }, { "SENS", "RANGE", "RES", "MIX" } };
-            static const bool on[6][4] = { { 0, 0, 0, 0 }, { 1, 1, 0, 1 }, { 1, 1, 0, 1 }, { 1, 1, 0, 1 }, { 1, 1, 1, 1 }, { 1, 1, 1, 1 } };
-            const int t = juce::jlimit (0, 5, i);
-            for (int k = 0; k < 4; ++k) { modKnobs[(size_t) k]->setName (nm[t][k]); modKnobs[(size_t) k]->setActive (on[t][k]); }
-        };
         headStrip->start();
         pedStrip->start();
         compStrip->start();
-        modStrip->start();
     }
 
     ~Content() override { stopTimer(); }
@@ -764,10 +739,7 @@ public:
 
 private:
     static constexpr int ampY = 310;
-    static constexpr int modW = 420, delayW = 360, reverbW = 342, rowY = 618, rowX0 = 24, rowX1 = 1170, gapPx = 12;
-    static constexpr int perms[6][3] = { {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0} };
-
-    int widthOf (int id) const { return id == 0 ? modW : (id == 1 ? delayW : reverbW); }
+    static constexpr int fxN = 7, fxW = 160, fxH = 205, rowY = 618, rowX0 = 24, fxGap = 5;
 
     // Disposicion de controles del amp por head: kind 0 perilla, 1 boton, 2 fader del grafico
     struct Item { const char* pid; const char* label; int kind; float cx; float dy; };
@@ -837,12 +809,10 @@ private:
 
     void layoutModules (bool animate, int skipId)
     {
-        int x = rowX0;
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < fxN; ++k)
         {
             const int id = order[k];
-            const juce::Rectangle<int> r (x, rowY, widthOf (id), 210);
-            x += widthOf (id) + gapPx;
+            const juce::Rectangle<int> r (rowX0 + k * (fxW + fxGap), rowY, fxW, fxH);
             if (id == skipId) continue;
             if (animate) animator.animateComponent (byId[id], r, 1.0f, 140, false, 1.0, 1.0);
             else byId[id]->setBounds (r);
@@ -858,21 +828,16 @@ private:
     }
     void dragMove (int id, ModuleBox& b, const juce::MouseEvent& e)
     {
-        const int nx = juce::jlimit (rowX0, rowX1 - b.getWidth(), e.getEventRelativeTo (this).x - dragOffset);
+        const int nx = juce::jlimit (rowX0, rowX0 + (fxN - 1) * (fxW + fxGap), e.getEventRelativeTo (this).x - dragOffset);
         b.setTopLeftPosition (nx, rowY);
-        std::pair<int, int> c[3];
-        int x = rowX0;
-        for (int k = 0; k < 3; ++k)
+        const int slot = juce::jlimit (0, fxN - 1, (nx + fxW / 2 - rowX0) / (fxW + fxGap));
+        int cur = 0;
+        while (cur < fxN && order[cur] != id) ++cur;
+        if (cur < fxN && slot != cur)
         {
-            const int mid = order[k];
-            c[k] = { mid == id ? nx + b.getWidth() / 2 : x + widthOf (mid) / 2, mid };
-            x += widthOf (mid) + gapPx;
-        }
-        std::sort (c, c + 3);
-        int newOrder[3] = { c[0].second, c[1].second, c[2].second };
-        if (newOrder[0] != order[0] || newOrder[1] != order[1] || newOrder[2] != order[2])
-        {
-            for (int k = 0; k < 3; ++k) order[k] = newOrder[k];
+            const int step = slot > cur ? 1 : -1;
+            for (int k = cur; k != slot; k += step) order[k] = order[k + step];
+            order[slot] = id;
             layoutModules (true, id);
         }
     }
@@ -880,18 +845,17 @@ private:
     {
         dragId = -1;
         layoutModules (true, -1);
-        for (int o = 0; o < 6; ++o)
-            if (perms[o][0] == order[0] && perms[o][1] == order[1] && perms[o][2] == order[2])
-                orderAtt->setValueAsCompleteGesture ((float) o);
+        orderAtt->setValueAsCompleteGesture ((float) jah::encodeOrder (order));
     }
 
-    void setupPower (ModuleBox& box, juce::TextButton& btn, const char* pid, juce::Colour col, int boxW,
-                     std::vector<KnobUnit*>& ks, juce::TextButton* extra)
+    // Boton ON/OFF de un efecto: atenua las perillas cuando esta apagado
+    void setupPower (ModuleBox& box, juce::TextButton& btn, const char* pid, juce::Colour col,
+                     const std::vector<KnobUnit*>& ks, juce::Component* extra)
     {
         btn.setClickingTogglesState (true);
         btn.setColour (juce::TextButton::buttonOnColourId, col);
         btn.getProperties().set ("small", true);
-        btn.setBounds (boxW - 18 - 46, 8, 46, 22);
+        btn.setBounds (fxW - 8 - 44, 8, 44, 22);
         auto refresh = [&btn, ks, extra] ()
         {
             const bool on = btn.getToggleState();
@@ -1004,16 +968,19 @@ private:
     int skin = 0, pedalIdx = 0, lastPreset = 0, dragId = -1, dragOffset = 0;
     float inDb = -90.0f, outDb = -90.0f, holdIn = -90.0f, holdOut = -90.0f, grDb = 0.0f;
     const juce::Rectangle<int> meterArea { 396, 4, 440, 46 };
-    int order[3] = { 0, 1, 2 };
+    int order[7] = { 0, 1, 2, 3, 4, 5, 6 };
     bool initialised = false;
     juce::Image heads[6];
-    std::unique_ptr<ChoiceStrip> headStrip, pedStrip, compStrip, modStrip;
-    std::unique_ptr<ModuleBox> dynBox, pedBox, modBox, delayBox, reverbBox;
-    ModuleBox* byId[3] = { nullptr, nullptr, nullptr };
+    std::unique_ptr<ChoiceStrip> headStrip, pedStrip, compStrip;
+    std::unique_ptr<ModuleBox> dynBox, pedBox;
+    std::unique_ptr<ModuleBox> fxBox[7];
+    std::vector<KnobUnit*> fxKnobs[7];
+    juce::TextButton fxOn[7];
+    ModuleBox* byId[7] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
     std::vector<std::unique_ptr<KnobUnit>> knobs;
     std::map<juce::String, KnobUnit*> ampKnobs;
-    std::vector<KnobUnit*> compKnobs, pedKnobs, modKnobs, delayKnobs, reverbKnobs;
-    juce::TextButton tapButton, prevBtn, nextBtn, presetBtn, delayOn, reverbOn, boostBtn, brightBtn;
+    std::vector<KnobUnit*> compKnobs, pedKnobs;
+    juce::TextButton tapButton, prevBtn, nextBtn, presetBtn, boostBtn, brightBtn;
     std::unique_ptr<FloatToggle> uloTog, uhiTog;
     std::unique_ptr<APVTS::ButtonAttachment> boostAtt, brightAtt;
     std::array<juce::Slider, 7> eqSl;

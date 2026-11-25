@@ -7,16 +7,57 @@ namespace jah
 {
 struct FxParams
 {
-    int mod = 0;                                   // 0 Off, 1 Chorus, 2 Flanger, 3 Phaser, 4 Tremolo, 5 Slicer, 6 Ring Mod
+    // parametros que usa cada instancia de ModFx
+    int mod = 0;                                   // 0 Off, 1 Chorus, 2 Flanger, 3 Phaser
     float mrate = 3, mdepth = 6, mmix = 0.5f;      // rate y depth 0..10, mix 0..1
     float mshape = 3;
-    int mpat = 0;                                  // patron del slicer (0..5)
-    int order[3] = { 0, 1, 2 };                    // orden de los efectos: 0 Mod, 1 Delay, 2 Reverb                              // 0..10: forma del tremolo (seno->cuadrada) y filo del slicer
+    int mpat = 0;
+    float fbAmt = -1.0f;                           // realimentacion del flanger / phaser (0..0.9); -1 = valor por defecto
+    // delay y reverb
     float dtimeMs = 380, dfb = 0.35f, dmix = 0.0f; // delay
     float rsize = 4, rdamp = 5, rmix = 0.0f;       // reverb (size y damp 0..10)
+    // efectos de bajo independientes (cada uno con su on/off)
+    bool chOn = false, flOn = false, phOn = false, ocOn = false, efOn = false;
+    float chRate = 3, chDepth = 6, chMix = 0.4f;
+    float flRate = 2, flDepth = 5, flMix = 0.4f, flFb = 5;
+    float phRate = 2, phDepth = 6, phMix = 0.5f, phFb = 4;
+    float ocDown = 7, ocUp = 0, ocTone = 4, ocDirect = 0.7f;
+    float efSens = 5, efRange = 6, efRes = 4, efMix = 0.7f;
+    int order[7] = { 0, 1, 2, 3, 4, 5, 6 };        // 0 Chorus, 1 Flanger, 2 Phaser, 3 Octaver, 4 Env Filter, 5 Delay, 6 Reverb
     double bpm = 120.0, ppq = 0.0;
     bool playing = false, hasPpq = false;
 };
+
+// Orden de la cadena: permutacion de 7 elementos codificada como entero 0..5039 (codigo de Lehmer)
+inline void decodeOrder (int idx, int out[7])
+{
+    static const int fact[7] = { 720, 120, 24, 6, 2, 1, 1 };
+    if (idx < 0) idx = 0;
+    if (idx > 5039) idx = 5039;
+    int pool[7] = { 0, 1, 2, 3, 4, 5, 6 }, n = 7;
+    for (int i = 0; i < 7; ++i)
+    {
+        const int d = idx / fact[i]; idx %= fact[i];
+        out[i] = pool[d];
+        for (int j = d; j < n - 1; ++j) pool[j] = pool[j + 1];
+        --n;
+    }
+}
+inline int encodeOrder (const int ord[7])
+{
+    static const int fact[7] = { 720, 120, 24, 6, 2, 1, 1 };
+    int pool[7] = { 0, 1, 2, 3, 4, 5, 6 }, n = 7, idx = 0;
+    for (int i = 0; i < 7; ++i)
+    {
+        int d = 0;
+        while (d < n && pool[d] != ord[i]) ++d;
+        if (d >= n) return 0;
+        idx += d * fact[i];
+        for (int j = d; j < n - 1; ++j) pool[j] = pool[j + 1];
+        --n;
+    }
+    return idx;
+}
 
 // Puerta de ruido: detector de picos con histeresis, retencion y cierre total.
 // thrDb <= -79.5 la apaga.
@@ -166,8 +207,8 @@ public:
                     const double sweep = 0.4 + depth / 10.0 * 4.0, k = fs / 1000.0;
                     wl = fL.read ((0.5 + sweep * (0.5 + 0.5 * sn (ph1))) * k);
                     wr = fR.read ((0.5 + sweep * (0.5 + 0.5 * sn (ph1 + 0.25))) * k);
-                    fL.write ((float) (xl + 0.55 * wl));
-                    fR.write ((float) (xr + 0.55 * wr));
+                    fL.write ((float) (xl + (p.fbAmt >= 0.0f ? (double) p.fbAmt : 0.55) * wl));
+                    fR.write ((float) (xr + (p.fbAmt >= 0.0f ? (double) p.fbAmt : 0.55) * wr));
                     break;
                 }
                 case 3: // Phaser: 6 allpass de primer orden con barrido exponencial
@@ -179,7 +220,7 @@ public:
                         const double lfo = 0.5 + 0.5 * sn (ph1 + (c ? 0.25 : 0.0));
                         const double f = 180.0 * std::pow (fmax / 180.0, lfo);
                         const double t = std::tan (kPi * f / fs), a = (t - 1.0) / (t + 1.0);
-                        double v = (c ? xr : xl) + 0.4 * apFb[c];
+                        double v = (c ? xr : xl) + (p.fbAmt >= 0.0f ? (double) p.fbAmt : 0.4) * apFb[c];
                         for (int s = 0; s < 6; ++s)
                         {
                             const double y = a * v + apZ[c][s];
@@ -425,42 +466,54 @@ private:
 };
 
 //==============================================================================
-// Octaver analogico: flip-flops sobre los cruces por cero de la senal filtrada (-1 y -2 octavas).
+// Octaver al estilo OC-2: una octava abajo (flip-flop sobre los cruces por cero), una octava arriba
+// (rectificacion de onda completa) y la senal directa.
 class Octaver
 {
 public:
     void prepare (double sr)
     {
-        fs = sr; lp.set (200.0, fs); lp2.set (200.0, fs);
+        fs = sr; lp.set (200.0, fs); lp2.set (200.0, fs); dcHp.set (45.0, fs);
         sdA = 1.0 - std::exp (-1.0 / (fs * 0.001));
         sdR = 1.0 - std::exp (-1.0 / (fs * 0.03));
         envA = 1.0 - std::exp (-1.0 / (fs * 0.003));
         envR = 1.0 - std::exp (-1.0 / (fs * 0.06));
         reset();
     }
-    void reset() { env = 0.0; envSd = 0.0; hi = false; f1 = false; f2 = false; lp.reset(); lp2.reset(); a1.reset(); a2.reset(); b1.reset(); b2.reset(); }
-    void setTone (double hz) { a1.set (hz, fs); a2.set (hz, fs); b1.set (hz, fs); b2.set (hz, fs); }
+    void reset()
+    {
+        env = 0.0; envSd = 0.0; hi = false; f1 = false;
+        lp.reset(); lp2.reset(); dcHp.reset(); a1.reset(); a2.reset(); u1.reset(); u2.reset();
+    }
+    // tone 0..10: pasabajos de las octavas (la de abajo mas oscura, la de arriba mas abierta)
+    void setTone (double tone)
+    {
+        const double down = 80.0 * std::pow (8.0, clampd (tone, 0.0, 10.0) / 10.0);
+        a1.set (down, fs); a2.set (down, fs);
+        const double up = clampd (down * 4.0, 300.0, 3000.0);
+        u1.set (up, fs); u2.set (up, fs);
+    }
 
-    double process (double x, double o1, double o2, double direct)
+    double process (double x, double down, double up, double direct)
     {
         const double sd = lp2.lp (lp.lp (x));
         const double a = std::abs (x);
         env += (a > env ? envA : envR) * (a - env);
         const double as = std::abs (sd);
         envSd += (as > envSd ? sdA : sdR) * (as - envSd);
-        const double thr = std::max (0.003, envSd * 0.35);     // histeresis relativa: ignora los armonicos
-        if (! hi && sd > thr) { hi = true; f1 = ! f1; if (f1) f2 = ! f2; }
+        const double thr = std::max (0.003, envSd * 0.35);
+        if (! hi && sd > thr) { hi = true; f1 = ! f1; }
         else if (hi && sd < -thr) hi = false;
-        const double amp = env * 1.3;
-        const double s1 = a2.lp (a1.lp ((f1 ? 1.0 : -1.0) * amp));
-        const double s2 = b2.lp (b1.lp ((f2 ? 1.0 : -1.0) * amp));
-        return direct * x + o1 * s1 + o2 * s2;
+        const double gate = clampd ((env - 0.002) / 0.006, 0.0, 1.0);        // sin senal no hay octavas
+        const double sub = a2.lp (a1.lp ((f1 ? 1.0 : -1.0) * env * 1.3)) * gate;
+        const double rect = u2.lp (u1.lp (dcHp.hp (a))) * 1.5 * gate;        // |x| tiene el doble de frecuencia
+        return direct * x + down * sub + up * rect;
     }
 
 private:
     double fs = 48000.0, env = 0.0, envSd = 0.0, envA = 0.01, envR = 0.001, sdA = 0.02, sdR = 0.001;
-    bool hi = false, f1 = false, f2 = false;
-    OnePole lp, lp2, a1, a2, b1, b2;
+    bool hi = false, f1 = false;
+    OnePole lp, lp2, dcHp, a1, a2, u1, u2;
 };
 
 //==============================================================================
@@ -513,32 +566,26 @@ private:
 };
 
 //==============================================================================
-// Modulacion para bajo: tipo 0 Off, 1 Chorus, 2 Flanger (solo sobre los agudos, los graves quedan intactos),
-// 3 Phaser, 4 Octaver, 5 Filtro de envolvente. mrate/mdepth/mshape/mmix cambian de sentido segun el tipo.
-class BassMod
+// Efecto de modulacion independiente (chorus, flanger o phaser). Chorus y flanger se aplican solo sobre los
+// agudos para que los graves queden intactos.
+class ModEffect
 {
 public:
     static constexpr int kChunk = 512;
+    ModEffect (int t, bool split) : type (t), bandSplit (split) {}
 
-    void prepare (double sr)
-    {
-        fs = sr;
-        mod.prepare (sr); oct.prepare (sr); envf.prepare (sr);
-        lpL.set (160.0, fs); lpR.set (160.0, fs);
-    }
+    void prepare (double sr) { mod.prepare (sr); lpL.set (160.0, sr); lpR.set (160.0, sr); }
 
-    void process (float* l, float* r, int n, const FxParams& p)
+    void process (float* l, float* r, int n, bool on, float rate, float depth, float mix, float fb)
     {
-        FxParams pm = p;
-        const int t = p.mod;
-        pm.mod = (t >= 1 && t <= 3) ? t : 0;
-        const double toneHz = 80.0 * std::pow (8.0, clampd (p.mshape, 0.0f, 10.0f) / 10.0);
-        oct.setTone (toneHz);
+        FxParams pm;
+        pm.mod = on ? type : 0;
+        pm.mrate = rate; pm.mdepth = depth; pm.mmix = mix; pm.fbAmt = fb;
         for (int s = 0; s < n; s += kChunk)
         {
             const int m = std::min (kChunk, n - s);
             float* L = l + s; float* R = r + s;
-            if (t == 1 || t == 2)
+            if (bandSplit && on)
             {
                 for (int i = 0; i < m; ++i)
                 {
@@ -549,57 +596,100 @@ public:
                 for (int i = 0; i < m; ++i) { L[i] = lowL[i] + hL[i]; R[i] = lowR[i] + hR[i]; }
             }
             else
-            {
-                mod.process (L, R, L, R, m, pm);          // fase / pass-through
-                if (t == 4)
-                {
-                    const double o1 = p.mrate / 10.0, o2 = p.mdepth / 10.0, direct = p.mmix;
-                    for (int i = 0; i < m; ++i)
-                    {
-                        const double y = oct.process (0.5 * ((double) L[i] + (double) R[i]), o1, o2, direct);
-                        L[i] = R[i] = (float) y;
-                    }
-                }
-                else if (t == 5)
-                    envf.process (L, R, m, p.mrate, p.mdepth, p.mshape, p.mmix);
-            }
+                mod.process (L, R, L, R, m, pm);      // phaser, o pass-through con fundido de salida
         }
     }
 
 private:
-    double fs = 48000.0;
+    int type; bool bandSplit;
     ModFx mod;
-    Octaver oct;
-    EnvFilter envf;
     OnePole lpL, lpR;
     float lowL[kChunk], lowR[kChunk], hL[kChunk], hR[kChunk];
 };
 
+// Cadena de efectos de bajo: cada uno con su on/off y en el orden que se elija.
 class FxChain
 {
 public:
+    static constexpr int kChunk = 512;
+
+    FxChain() : chorus (1, true), flanger (2, true), phaser (3, false) {}
+
     void prepare (double sr)
     {
-        mod.prepare (sr); delay.prepare (sr); reverb.prepare (sr);
+        fs = sr;
+        chorus.prepare (sr); flanger.prepare (sr); phaser.prepare (sr);
+        oct.prepare (sr); envf.prepare (sr); delay.prepare (sr); reverb.prepare (sr);
+        ocG = efG = 0.0; ocWas = efWas = false;
     }
-    // in: mono desde el amp. l/r: salida estereo. El orden de Mod, Delay y Reverb lo da p.order.
+
+    // in: mono desde el amp. l/r: salida estereo.
     void process (const float* in, float* l, float* r, int n, const FxParams& p)
     {
         for (int i = 0; i < n; ++i) { l[i] = in[i]; r[i] = in[i]; }
-        for (int k = 0; k < 3; ++k)
+        for (int k = 0; k < 7; ++k)
         {
             switch (p.order[k])
             {
-                case 0:  mod.process (l, r, n, p); break;
-                case 1:  delay.process (l, r, n, p); break;
+                case 0: chorus.process (l, r, n, p.chOn, p.chRate, p.chDepth, p.chMix, -1.0f); break;
+                case 1: flanger.process (l, r, n, p.flOn, p.flRate, p.flDepth, p.flMix, p.flFb / 10.0f * 0.9f); break;
+                case 2: phaser.process (l, r, n, p.phOn, p.phRate, p.phDepth, p.phMix, p.phFb / 10.0f * 0.9f); break;
+                case 3: octaver (l, r, n, p); break;
+                case 4: envFilter (l, r, n, p); break;
+                case 5: delay.process (l, r, n, p); break;
                 default: reverb.process (l, r, n, p); break;
             }
         }
     }
 
 private:
-    BassMod mod;
+    // fundido de entrada/salida de un efecto sin estado de mezcla propio
+    static double ramp (double g, bool on, double step) { return on ? std::min (1.0, g + step) : std::max (0.0, g - step); }
+
+    void octaver (float* l, float* r, int n, const FxParams& p)
+    {
+        if (! p.ocOn && ocG <= 0.0) { ocWas = false; return; }
+        if (p.ocOn && ! ocWas) oct.reset();
+        ocWas = p.ocOn;
+        oct.setTone (p.ocTone);
+        const double down = p.ocDown / 10.0, up = p.ocUp / 10.0, step = 1.0 / (fs * 0.01);
+        for (int i = 0; i < n; ++i)
+        {
+            ocG = ramp (ocG, p.ocOn, step);
+            const double x = 0.5 * ((double) l[i] + (double) r[i]);
+            const double y = oct.process (x, down, up, p.ocDirect);
+            l[i] = (float) ((double) l[i] * (1.0 - ocG) + y * ocG);
+            r[i] = (float) ((double) r[i] * (1.0 - ocG) + y * ocG);
+        }
+    }
+
+    void envFilter (float* l, float* r, int n, const FxParams& p)
+    {
+        if (! p.efOn && efG <= 0.0) { efWas = false; return; }
+        if (p.efOn && ! efWas) envf.reset();
+        efWas = p.efOn;
+        for (int s = 0; s < n; s += kChunk)
+        {
+            const int m = std::min (kChunk, n - s);
+            for (int i = 0; i < m; ++i) { dL[i] = l[s + i]; dR[i] = r[s + i]; }
+            envf.process (l + s, r + s, m, p.efSens, p.efRange, p.efRes, p.efMix);
+            const double step = 1.0 / (fs * 0.01);
+            for (int i = 0; i < m; ++i)
+            {
+                efG = ramp (efG, p.efOn, step);
+                l[s + i] = (float) (dL[i] * (1.0 - efG) + (double) l[s + i] * efG);
+                r[s + i] = (float) (dR[i] * (1.0 - efG) + (double) r[s + i] * efG);
+            }
+        }
+    }
+
+    double fs = 48000.0, ocG = 0.0, efG = 0.0;
+    bool ocWas = false, efWas = false;
+    ModEffect chorus, flanger, phaser;
+    Octaver oct;
+    EnvFilter envf;
     StereoDelay delay;
     Reverb reverb;
+    float dL[kChunk], dR[kChunk];
 };
 } // namespace jah

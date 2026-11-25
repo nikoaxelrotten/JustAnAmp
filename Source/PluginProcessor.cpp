@@ -57,9 +57,6 @@ APVTS::ParameterLayout JustAnAmpProcessor::createParameterLayout()
     addFloat ("pextra",  "Pedal Presence/Grunt", 0.0f, 10.0f, 5.0f);
 
     // --- Efectos post-head ---
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "mod", 1 }, "Mod",
-        StringArray { "Off", "Chorus", "Flanger", "Phaser", "Octaver", "Env Filter" }, 0));
-
     auto addFx = [&layout] (const char* id, const char* name, float min, float max, float def, float step,
                             float skew, const String& unit)
     {
@@ -70,13 +67,29 @@ APVTS::ParameterLayout JustAnAmpProcessor::createParameterLayout()
                     { return String (step >= 1.0f ? String ((int) std::round (v)) : String (v, 1)) + unit; })
                 .withValueFromStringFunction ([] (const String& t) { return t.getFloatValue(); })));
     };
-    addFx ("mrate",  "Mod Rate",     0.0f, 10.0f,   3.0f, 0.1f, 1.0f, "");
-    addFx ("mdepth", "Mod Depth",    0.0f, 10.0f,   6.0f, 0.1f, 1.0f, "");
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "fxorder", 1 }, "FX Order",
-        StringArray { "Mod-Delay-Reverb", "Mod-Reverb-Delay", "Delay-Mod-Reverb", "Delay-Reverb-Mod", "Reverb-Mod-Delay", "Reverb-Delay-Mod" }, 0));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "don", 1 }, "Delay On", true));
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "ron", 1 }, "Reverb On", true));
-    addFx ("mshape", "Mod Shape",    0.0f, 10.0f,   3.0f, 0.1f, 1.0f, "");
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "fxorder7", 1 }, "FX Order", 0, 5039, 0));
+    auto addOn = [&layout] (const char* id, const char* name) { layout.add (std::make_unique<AudioParameterBool> (ParameterID { id, 1 }, name, false)); };
+    addOn ("chon", "Chorus On"); addOn ("flon", "Flanger On"); addOn ("phon", "Phaser On");
+    addOn ("ocon", "Octaver On"); addOn ("efon", "Env Filter On"); addOn ("don", "Delay On"); addOn ("ron", "Reverb On");
+    addFx ("chrate",  "Chorus Rate",     0.0f, 10.0f,  3.0f, 0.1f, 1.0f, "");
+    addFx ("chdepth", "Chorus Depth",    0.0f, 10.0f,  6.0f, 0.1f, 1.0f, "");
+    addFx ("chmix",   "Chorus Mix",      0.0f, 100.0f, 40.0f, 1.0f, 1.0f, "%");
+    addFx ("flrate",  "Flanger Rate",    0.0f, 10.0f,  2.0f, 0.1f, 1.0f, "");
+    addFx ("fldepth", "Flanger Depth",   0.0f, 10.0f,  5.0f, 0.1f, 1.0f, "");
+    addFx ("flfb",    "Flanger Feedback", 0.0f, 10.0f, 5.0f, 0.1f, 1.0f, "");
+    addFx ("flmix",   "Flanger Mix",     0.0f, 100.0f, 40.0f, 1.0f, 1.0f, "%");
+    addFx ("phrate",  "Phaser Rate",     0.0f, 10.0f,  2.0f, 0.1f, 1.0f, "");
+    addFx ("phdepth", "Phaser Depth",    0.0f, 10.0f,  6.0f, 0.1f, 1.0f, "");
+    addFx ("phfb",    "Phaser Feedback", 0.0f, 10.0f,  4.0f, 0.1f, 1.0f, "");
+    addFx ("phmix",   "Phaser Mix",      0.0f, 100.0f, 50.0f, 1.0f, 1.0f, "%");
+    addFx ("ocdown",  "Octaver -1 Oct",  0.0f, 10.0f,  7.0f, 0.1f, 1.0f, "");
+    addFx ("ocup",    "Octaver +1 Oct",  0.0f, 10.0f,  0.0f, 0.1f, 1.0f, "");
+    addFx ("octone",  "Octaver Tone",    0.0f, 10.0f,  4.0f, 0.1f, 1.0f, "");
+    addFx ("ocdirect", "Octaver Direct", 0.0f, 100.0f, 70.0f, 1.0f, 1.0f, "%");
+    addFx ("efsens",  "Env Filter Sens", 0.0f, 10.0f,  5.0f, 0.1f, 1.0f, "");
+    addFx ("efrange", "Env Filter Range", 0.0f, 10.0f, 6.0f, 0.1f, 1.0f, "");
+    addFx ("efres",   "Env Filter Res",  0.0f, 10.0f,  4.0f, 0.1f, 1.0f, "");
+    addFx ("efmix",   "Env Filter Mix",  0.0f, 100.0f, 70.0f, 1.0f, 1.0f, "%");
     addFx ("gthr",   "Gate Threshold", -80.0f, -20.0f, -80.0f, 0.5f, 1.0f, " dB");
     addFx ("grel",   "Gate Release", 10.0f, 500.0f,  80.0f, 1.0f, 0.5f, " ms");
     addFx ("cthr",   "Comp Threshold", -40.0f, 0.0f, -18.0f, 0.5f, 1.0f, " dB");
@@ -85,13 +98,12 @@ APVTS::ParameterLayout JustAnAmpProcessor::createParameterLayout()
     addFx ("crel",   "Comp Release",  20.0f, 1200.0f, 200.0f, 1.0f, 0.5f, " ms");
     addFx ("cblend", "Comp Blend",    0.0f, 100.0f, 100.0f, 1.0f, 1.0f, "%");
     addFx ("cgain",  "Comp Makeup",  -6.0f, 18.0f,   0.0f, 0.5f, 1.0f, " dB");
-    addFx ("mmix",   "Mod Mix",      0.0f, 100.0f, 50.0f, 1.0f, 1.0f, "%");
     addFx ("dtime",  "Delay Time",  40.0f, 1200.0f, 380.0f, 1.0f, 0.5f, " ms");
     addFx ("dfb",    "Delay Feedback", 0.0f, 95.0f, 35.0f, 1.0f, 1.0f, "%");
-    addFx ("dmix",   "Delay Mix",    0.0f, 100.0f,  0.0f, 1.0f, 1.0f, "%");
+    addFx ("dmix",   "Delay Mix",    0.0f, 100.0f, 25.0f, 1.0f, 1.0f, "%");
     addFx ("rsize",  "Reverb Size",  0.0f, 10.0f,   4.0f, 0.1f, 1.0f, "");
     addFx ("rdamp",  "Reverb Damp",  0.0f, 10.0f,   5.0f, 0.1f, 1.0f, "");
-    addFx ("rmix",   "Reverb Mix",   0.0f, 100.0f,  0.0f, 1.0f, 1.0f, "%");
+    addFx ("rmix",   "Reverb Mix",   0.0f, 100.0f, 25.0f, 1.0f, 1.0f, "%");
 
     return layout;
 }
@@ -156,11 +168,13 @@ void JustAnAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     engine.setParams (p);
 
     jah::FxParams fp;
-    fp.mod = (int) param ("mod");
-    fp.mrate = param ("mrate");
-    fp.mdepth = param ("mdepth");
-    fp.mmix = param ("mmix") / 100.0f;
-    fp.mshape = param ("mshape");
+    fp.chOn = param ("chon") > 0.5f; fp.flOn = param ("flon") > 0.5f; fp.phOn = param ("phon") > 0.5f;
+    fp.ocOn = param ("ocon") > 0.5f; fp.efOn = param ("efon") > 0.5f;
+    fp.chRate = param ("chrate"); fp.chDepth = param ("chdepth"); fp.chMix = param ("chmix") / 100.0f;
+    fp.flRate = param ("flrate"); fp.flDepth = param ("fldepth"); fp.flFb = param ("flfb"); fp.flMix = param ("flmix") / 100.0f;
+    fp.phRate = param ("phrate"); fp.phDepth = param ("phdepth"); fp.phFb = param ("phfb"); fp.phMix = param ("phmix") / 100.0f;
+    fp.ocDown = param ("ocdown"); fp.ocUp = param ("ocup"); fp.ocTone = param ("octone"); fp.ocDirect = param ("ocdirect") / 100.0f;
+    fp.efSens = param ("efsens"); fp.efRange = param ("efrange"); fp.efRes = param ("efres"); fp.efMix = param ("efmix") / 100.0f;
     const float gateThr = param ("gthr"), gateRel = param ("grel");
     const int ctype = (int) param ("ctype");
     const double cthr = param ("cthr"), cratio = param ("cratio"), catk = param ("catk"), crel = param ("crel"),
@@ -171,11 +185,7 @@ void JustAnAmpProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::M
     fp.rsize = param ("rsize");
     fp.rdamp = param ("rdamp");
     fp.rmix = param ("ron") > 0.5f ? param ("rmix") / 100.0f : 0.0f;
-    {
-        static const int perms[6][3] = { {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0} };
-        const int o = juce::jlimit (0, 5, (int) param ("fxorder"));
-        for (int k = 0; k < 3; ++k) fp.order[k] = perms[o][k];
-    }
+    jah::decodeOrder ((int) std::round (param ("fxorder7")), fp.order);
     if (auto* ph = getPlayHead())
         if (auto pos = ph->getPosition())
         {

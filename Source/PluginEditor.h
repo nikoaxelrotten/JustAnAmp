@@ -23,8 +23,13 @@ namespace jahead
     const juce::Colour colDyn    { 0xffff8a5c };
     const juce::Colour colPedal  { 0xfff0a030 };
     const juce::Colour colMod    { 0xffb36bf0 };
+    const juce::Colour colChorus  { 0xffb36bf0 };
+    const juce::Colour colFlanger { 0xffe56bd3 };
+    const juce::Colour colPhaser  { 0xff8f6bff };
+    const juce::Colour colOct     { 0xff5ad1ff };
+    const juce::Colour colEnv     { 0xffffd166 };
     const juce::Colour colDelay  { 0xff38d39f };
-    const juce::Colour colReverb { 0xff7f8cff };
+    const juce::Colour colReverb { 0xff7f9bff };
 }
 
 //==============================================================================
